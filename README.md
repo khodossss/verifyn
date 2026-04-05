@@ -21,6 +21,7 @@ Most "fake news detectors" are binary classifiers trained on static datasets. Th
 | Manipulation type | None | 9 types: FABRICATED, CONTEXT_MANIPULATION, OLD_CONTENT_RECYCLED, … |
 | Explainability | Score only | Full step-by-step reasoning narrative + plain-language summary |
 | Freshness | Frozen at training | Searches the live web — handles breaking news |
+| Source memory | None | Self-learning domain reputation DB — builds a trust map of sources over time |
 
 The core is a [ReAct](https://arxiv.org/abs/2210.03629) agent (Reason → Act → Observe → Repeat) built with **LangGraph** that autonomously decides which tools to call and in what order — until it has enough evidence to reach a verdict.
 
@@ -69,7 +70,55 @@ The agent follows an 8-step fact-checking methodology:
 | `search_fact_checkers(claim)` | Scoped search on Snopes, PolitiFact, Reuters, AFP, Full Fact |
 | `check_if_old_news(claim)` | Detect recycled content by finding earliest appearances |
 | `extract_article_content(url)` | Fetch full article text, author, date via trafilatura |
-| `check_domain_reputation(domain)` | WHOIS lookup + credibility/flagged domain lists |
+| `check_domain_reputation(domain)` | DB-learned credibility score + web reputation search |
+
+### Domain Reputation Database
+
+The agent **learns from its own verdicts** over time. After each fact-check, every source domain referenced in evidence is scored:
+
+```text
+                   Verdict
+                     │
+      ┌──────────────┼──────────────┐
+      ▼              ▼              ▼
+   evidence_for  evidence_against  sources_checked
+      │              │              │
+      └──────┬───────┘──────────────┘
+             ▼
+   Extract domains from URLs
+             │
+             ▼
+   Apply scoring table (verdict × supports_claim)
+             │
+             ▼
+   Upsert domain_reputation DB
+```
+
+**Scoring rules** — each source gets points based on verdict and whether it supported or contradicted the claim:
+
+| Verdict | Source supported claim | Source contradicted claim |
+| --- | --- | --- |
+| REAL | true +1.0 | false +1.0 |
+| FAKE | false +1.0 | true +1.0 |
+| PARTIALLY_FAKE | +0.5 / +0.5 | +0.5 / +0.5 |
+| MISLEADING | true +0.3, false +0.7 | true +0.7, false +0.3 |
+| SATIRE / UNVERIFIABLE | no change | no change |
+
+In **fast mode** all scores are multiplied by 0.5 (fewer sources checked = less reliable signal).
+
+**Credibility threshold:** once a domain accumulates 50+ total points, its credibility score is computed:
+
+```python
+credibility = true_points / (true_points + false_points)
+```
+
+The `check_domain_reputation` tool queries this DB first. If a domain is above threshold, the web reputation search is skipped entirely — the agent trusts its own accumulated data.
+
+**Deduplication:** the same query (normalized) can only update reputation scores once, preventing a single viral article from inflating domain scores if checked repeatedly.
+
+**Query history:** every fact-check is saved with its full result JSON, enabling analysis of past verdicts and agent behavior over time. Accessible via `GET /history`.
+
+**Research potential:** as the agent processes more claims and its verdict accuracy improves, the domain reputation database becomes a valuable byproduct — an empirically derived trust map of news sources. With high agent accuracy, the accumulated credibility scores can serve as an independent, data-driven source reliability index built from real fact-checking activity rather than editorial judgment.
 
 ---
 
@@ -182,9 +231,13 @@ fake_news_detection/
 ├── docker-compose.yml
 ├── requirements.txt
 ├── .env.example
+├── ruff.toml                  # Linter/formatter config
+├── .pre-commit-config.yaml    # Pre-commit hooks (ruff + tests)
+├── .github/workflows/ci.yml   # GitHub Actions CI (lint, test, docker build)
 │
 ├── backend/
-│   ├── main.py                # FastAPI app — POST /analyze, GET /health
+│   ├── main.py                # FastAPI app — POST /analyze, /analyze/stream, /history
+│   ├── tests/                 # 63 API + model tests
 │   └── Dockerfile
 │
 ├── website/
@@ -194,19 +247,25 @@ fake_news_detection/
 │   ├── nginx.conf
 │   └── Dockerfile             # Nginx static server
 │
+├── data/                      # SQLite DB (domain reputation + query history)
+│
 └── agent/
     ├── agent.py               # analyze_news() — ReAct loop + Pydantic extraction
     ├── models.py              # FactCheckResult, Verdict, ManipulationType
+    ├── db.py                  # Domain reputation DB + query history (SQLAlchemy)
     ├── run.py                 # CLI entry point (Rich terminal UI)
-    ├── evaluate.py            # Evaluation script (20-item labeled dataset)
+    ├── evaluate.py            # Evaluation on LIAR, FEVER, FakeNewsNet benchmarks
     ├── prompts/
     │   └── system.py          # 8-step methodology system prompt
     ├── tools/
     │   ├── search.py          # web_search, search_fact_checkers, check_if_old_news
     │   ├── extractor.py       # extract_article_content
-    │   └── domain.py          # check_domain_reputation
-    └── eval/
-        └── dataset.json       # 20 labeled news items for evaluation
+    │   └── domain.py          # check_domain_reputation (DB + web search)
+    ├── eval/
+    │   ├── dataset.json       # 20 labeled news items (smoke test)
+    │   ├── adapters.py        # LIAR, FEVER, FakeNewsNet dataset loaders
+    │   └── metrics.py         # Confusion matrix, F1, classification report
+    └── tests/                 # 180 agent tests (cycle, DB, tools, eval, models)
 ```
 
 ---
