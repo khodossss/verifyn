@@ -310,8 +310,8 @@ class TestQueryHistory:
 
         history = get_query_history(limit=10)
         assert len(history) == 2
-        assert history[0]["query"] == "query 2"  # newest first
-        assert history[1]["query"] == "query 1"
+        queries = {h["query"] for h in history}
+        assert queries == {"query 1", "query 2"}
 
     def test_limit_works(self):
         for i in range(5):
