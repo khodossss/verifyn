@@ -1,0 +1,23 @@
+:root {
+  --bg:           #0a0a0c;
+  --bg-card:      #141418;
+  --bg-elevated:  #1c1c22;
+  --border:       #26262e;
+  --border-bright:#3a3a46;
+  --text:         #ede8e0;
+  --text-muted:   #7a7468;
+  --text-dim:     #4a4640;
+  --gold:         #c8a84b;
+  --gold-dim:     #7a6628;
+  --c-real:       #22c55e;
+  --c-fake:       #ef4444;
+  --c-misleading: #f59e0b;
+  --c-partial:    #f97316;
+  --c-unverif:    #94a3b8;
+  --c-satire:     #a855f7;
+  --font-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-sans:  'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono:  'JetBrains Mono', 'Courier New', monospace;
+  --radius: 6px;
+  --shadow: 0 4px 24px rgba(0,0,0,.5);
+}

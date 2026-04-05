@@ -1,0 +1,52 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Claude Code
+.claude/
+
+# Test output
+res.txt
+
+# Database files
+data/*.db
+
+# Evaluation datasets (downloaded, not committed)
+agent/eval/liar/
+agent/eval/fever/
+agent/eval/fakenewsnet/
+agent/eval/fakenewsnet_politifact/
+agent/eval/fakenewsnet_gossipcop/
+
+# Evaluation results (generated, kept locally)
+agent/eval/reports/

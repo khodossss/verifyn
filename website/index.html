@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verifyn — AI Fact-Check Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/ticker.css" />
+  <link rel="stylesheet" href="css/masthead.css" />
+  <link rel="stylesheet" href="css/input.css" />
+  <link rel="stylesheet" href="css/loading.css" />
+  <link rel="stylesheet" href="css/results.css" />
+  <link rel="stylesheet" href="css/footer.css" />
+  <link rel="stylesheet" href="css/animations.css" />
+</head>
+<body>
+
+  <!-- Breaking news ticker -->
+  <div class="ticker">
+    <span class="ticker-label">LIVE</span>
+    <div style="overflow:hidden;flex:1">
+      <div class="ticker-track">
+        8-STEP VERIFICATION METHODOLOGY &nbsp;·&nbsp; LATERAL READING PROTOCOL &nbsp;·&nbsp;
+        REAL-TIME SOURCE ANALYSIS &nbsp;·&nbsp; PROFESSIONAL FACT-CHECKER CROSS-REFERENCE &nbsp;·&nbsp;
+        DOMAIN REPUTATION SCORING &nbsp;·&nbsp; DETECTING DISINFORMATION &nbsp;·&nbsp;
+        8-STEP VERIFICATION METHODOLOGY &nbsp;·&nbsp; LATERAL READING PROTOCOL &nbsp;·&nbsp;
+        REAL-TIME SOURCE ANALYSIS &nbsp;·&nbsp; PROFESSIONAL FACT-CHECKER CROSS-REFERENCE &nbsp;·&nbsp;
+        DOMAIN REPUTATION SCORING &nbsp;·&nbsp; DETECTING DISINFORMATION &nbsp;·&nbsp;
+      </div>
+    </div>
+  </div>
+
+  <!-- Masthead -->
+  <header>
+    <div class="masthead-meta">
+      <span id="today-date"></span>
+      <nav class="masthead-nav">
+        <button class="nav-btn" onclick="document.getElementById('about-modal').classList.add('open')">ABOUT</button>
+        <a class="nav-btn" href="https://github.com/khodossss/verifyn" target="_blank" rel="noopener">GITHUB</a>
+      </nav>
+    </div>
+    <h1 class="masthead-title"><span>VERIFYN</span></h1>
+    <p class="masthead-tagline">AI-Powered Fact-Check Intelligence</p>
+    <div class="masthead-rule"><div class="masthead-rule-inner"></div></div>
+  </header>
+
+  <main>
+
+    <!-- Input -->
+    <section class="input-section" id="input-section">
+      <div class="section-label">Submit Article for Investigation</div>
+      <textarea
+        id="news-text"
+        placeholder="Paste a news article, headline, or claim here. The AI agent will research it across the web using the 8-step fact-checking methodology…"
+        oninput="updateCharCount()"
+      ></textarea>
+      <div class="input-footer">
+        <span class="char-count" id="char-count">0 characters</span>
+        <div class="input-actions">
+          <div class="mode-toggle">
+            <button class="mode-btn active" id="mode-fast" onclick="setMode('fast')">Fast</button>
+            <button class="mode-btn" id="mode-precise" onclick="setMode('precise')">Precise</button>
+          </div>
+          <button class="analyze-btn" id="analyze-btn" onclick="handleAnalyze()">
+            ▶ &nbsp; Investigate
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Loading -->
+    <section class="loading-section hidden" id="loading-section">
+      <div class="loading-header">
+        Investigation in progress
+        <span class="loading-timer" id="loading-timer">0s</span>
+      </div>
+      <div class="loading-status hidden" id="loading-status"></div>
+    </section>
+
+    <!-- Error -->
+    <div class="error-banner hidden" id="error-banner">
+      <strong>Investigation Failed:</strong> <span id="error-msg"></span>
+    </div>
+
+    <!-- Results -->
+    <section class="hidden fade-in" id="results">
+
+      <!-- Verdict -->
+      <div class="verdict-banner" id="verdict-banner">
+        <div class="verdict-stamp" id="verdict-stamp"></div>
+        <div class="verdict-meta">
+          <div class="confidence-label">Confidence</div>
+          <div class="confidence-row">
+            <div class="confidence-bar">
+              <div class="confidence-fill" id="confidence-fill"></div>
+            </div>
+            <div class="confidence-pct" id="confidence-pct"></div>
+          </div>
+          <div id="manipulation-badge" class="manipulation-badge"></div>
+        </div>
+      </div>
+
+      <!-- Summary -->
+      <div class="summary-box" id="summary-box"></div>
+
+      <!-- 2-col grid -->
+      <div class="results-grid">
+
+        <div>
+          <!-- Claims -->
+          <div class="result-card">
+            <div class="card-title">Main Claims Identified</div>
+            <ul class="claims-list" id="claims-list"></ul>
+          </div>
+          <!-- Date context -->
+          <div class="result-card" id="date-card">
+            <div class="card-title">Date &amp; Context</div>
+            <p class="info-text" id="date-context"></p>
+          </div>
+          <!-- Primary source -->
+          <div class="result-card" id="primary-source-card">
+            <div class="card-title">Primary Source</div>
+            <p class="info-text" id="primary-source"></p>
+          </div>
+        </div>
+
+        <div>
+          <!-- Evidence -->
+          <div class="result-card" style="height:100%">
+            <div class="card-title">
+              Evidence
+              <div class="tabs">
+                <button class="tab active" id="tab-for"     onclick="showTab('for')">For (<span id="for-count">0</span>)</button>
+                <button class="tab"        id="tab-against" onclick="showTab('against')">Against (<span id="against-count">0</span>)</button>
+              </div>
+            </div>
+            <div id="evidence-for"     class="evidence-list"></div>
+            <div id="evidence-against" class="evidence-list hidden"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Fact-checkers + sources row -->
+      <div class="results-row">
+        <div class="result-card">
+          <div class="card-title">Professional Fact-Checkers</div>
+          <ul class="checkers-list" id="fact-checkers"></ul>
+        </div>
+        <div class="result-card">
+          <div class="card-title">Sources Consulted (<span id="sources-count">0</span>)</div>
+          <ul class="sources-list" id="sources-list"></ul>
+        </div>
+      </div>
+
+      <!-- Reasoning -->
+      <details class="reasoning-accordion">
+        <summary>Full Analysis — 8-Step Methodology</summary>
+        <div class="reasoning-text" id="reasoning-text"></div>
+      </details>
+
+    </section>
+  </main>
+
+  <footer>
+    Alexander Khodos 2026
+  </footer>
+
+  <!-- About Modal -->
+  <div class="modal-backdrop" id="about-modal" onclick="if(event.target===this)this.classList.remove('open')">
+    <div class="modal">
+      <button class="modal-close" onclick="document.getElementById('about-modal').classList.remove('open')">✕ CLOSE</button>
+      <div class="modal-title">About Verifyn</div>
+      <h2>AI-Driven Fact-Checking at Scale</h2>
+      <p>Verifyn is an autonomous fact-checking engine. Every submission is processed by a ReAct AI agent that independently searches the live web, cross-references primary sources, and applies a structured 8-step verification methodology — without human intervention.</p>
+      <p>This is not a keyword filter or a static database lookup. The agent reasons, searches, reads, and concludes — the same way an investigative journalist would, at machine speed. Built with LangGraph, FastAPI, and OpenAI.</p>
+      <hr class="modal-divider" />
+      <div class="modal-title">8-Step Methodology</div>
+      <ol>
+        <li><strong>Claim Extraction</strong> — Isolate the core verifiable assertion from the submitted text.</li>
+        <li><strong>Primary Source Search</strong> — Locate the original source of the claim via targeted web search.</li>
+        <li><strong>Date &amp; Context Verification</strong> — Confirm when the event occurred and whether the framing is current.</li>
+        <li><strong>Lateral Reading</strong> — Search what independent outlets report about the same claim.</li>
+        <li><strong>Corroboration Count</strong> — Assess how many credible sources confirm or contradict the claim.</li>
+        <li><strong>Old Content Check</strong> — Detect recycled or out-of-context material being passed as new.</li>
+        <li><strong>Professional Fact-Checkers</strong> — Query Snopes, PolitiFact, Reuters Fact Check, AP, Full Fact, and AFP.</li>
+        <li><strong>Classification</strong> — Synthesise all evidence into a verdict with confidence score and structured reasoning.</li>
+      </ol>
+      <hr class="modal-divider" />
+      <div class="modal-footer">Alexander Khodos &nbsp;·&nbsp; 2026 &nbsp;·&nbsp; For research purposes</div>
+    </div>
+  </div>
+
+  <script src="js/constants.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/loading.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

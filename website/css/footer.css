@@ -1,0 +1,10 @@
+footer {
+  border-top: 1px solid var(--border);
+  padding: 20px 24px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: .62rem;
+  letter-spacing: .1em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
