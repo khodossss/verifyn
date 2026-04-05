@@ -10,7 +10,7 @@ repos:
     hooks:
       - id: pytest
         name: tests
-        entry: pytest agent/tests/ -q --tb=short
+        entry: pytest agent/tests/ backend/tests/ -q --tb=short
         language: system
         pass_filenames: false
         always_run: true

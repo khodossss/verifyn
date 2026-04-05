@@ -207,35 +207,37 @@ class TestFactCheckResult:
 
 
 # ---------------------------------------------------------------------------
-# confidence_level_from_score
+# confidence_level auto-derived from score (model_validator)
 # ---------------------------------------------------------------------------
 
 
 class TestConfidenceLevelFromScore:
-    def test_score_08_is_high(self):
-        result = _make_result(confidence=0.8)
-        assert result.confidence_level_from_score() == ConfidenceLevel.HIGH
+    """The model_validator _enforce_confidence_level always overrides confidence_level."""
+
+    def test_score_085_is_high(self):
+        result = _make_result(confidence=0.85)
+        assert result.confidence_level == ConfidenceLevel.HIGH
 
     def test_score_09_is_high(self):
         result = _make_result(confidence=0.9)
-        assert result.confidence_level_from_score() == ConfidenceLevel.HIGH
+        assert result.confidence_level == ConfidenceLevel.HIGH
 
     def test_score_1_is_high(self):
         result = _make_result(confidence=1.0)
-        assert result.confidence_level_from_score() == ConfidenceLevel.HIGH
+        assert result.confidence_level == ConfidenceLevel.HIGH
 
     def test_score_05_is_medium(self):
         result = _make_result(confidence=0.5)
-        assert result.confidence_level_from_score() == ConfidenceLevel.MEDIUM
+        assert result.confidence_level == ConfidenceLevel.MEDIUM
 
-    def test_score_079_is_medium(self):
-        result = _make_result(confidence=0.79)
-        assert result.confidence_level_from_score() == ConfidenceLevel.MEDIUM
+    def test_score_084_is_medium(self):
+        result = _make_result(confidence=0.84)
+        assert result.confidence_level == ConfidenceLevel.MEDIUM
 
     def test_score_049_is_low(self):
         result = _make_result(confidence=0.49)
-        assert result.confidence_level_from_score() == ConfidenceLevel.LOW
+        assert result.confidence_level == ConfidenceLevel.LOW
 
     def test_score_0_is_low(self):
         result = _make_result(confidence=0.0)
-        assert result.confidence_level_from_score() == ConfidenceLevel.LOW
+        assert result.confidence_level == ConfidenceLevel.LOW

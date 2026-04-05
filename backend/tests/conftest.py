@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import os
 import sys
-
-# Ensure the project root (containing `agent` and `backend` packages) is on sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+
+# Ensure the project root is on sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from agent.models import (
     ConfidenceLevel,
@@ -60,6 +59,7 @@ def mock_result() -> FactCheckResult:
 @pytest.fixture
 def client(mock_result: FactCheckResult):
     with patch("backend.main.analyze_news", return_value=mock_result):
+        # Import app lazily to ensure patches are in place before FastAPI init
         from backend.main import app
 
         with TestClient(app) as c:
