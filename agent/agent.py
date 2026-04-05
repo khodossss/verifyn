@@ -110,7 +110,7 @@ REPAIR_SYSTEM = (
     "Your job: extract or reconstruct a valid FactCheckResult JSON from whatever is provided. "
     "Return ONLY a valid JSON object — no markdown, no explanation, no code fences. "
     "Required fields: verdict, confidence (float 0.0–1.0), confidence_level, manipulation_type, reasoning, summary. "
-    "verdict must be one of: REAL, FAKE, PARTIALLY_FAKE, MISLEADING, UNVERIFIABLE, SATIRE. "
+    "verdict must be one of: REAL, FAKE, PARTIALLY_FAKE, MISLEADING, UNVERIFIABLE, SATIRE, NO_CLAIMS. "
     "confidence_level must be HIGH, MEDIUM, or LOW. "
     "manipulation_type must be one of: NONE, FABRICATED, CONTEXT_MANIPULATION, "
     "OLD_CONTENT_RECYCLED, MISLEADING_HEADLINE, PARTIAL_TRUTH, SATIRE_MISREPRESENTED, "

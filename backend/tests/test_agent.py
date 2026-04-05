@@ -57,7 +57,7 @@ class TestVerdict:
         assert Verdict.SATIRE == "SATIRE"
 
     def test_all_six_verdicts_exist(self):
-        assert len(Verdict) == 6
+        assert len(Verdict) == 7
 
 
 # ---------------------------------------------------------------------------

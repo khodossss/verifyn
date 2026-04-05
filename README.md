@@ -1,6 +1,6 @@
 # Verifyn — AI Fact-Check Engine
 
-An autonomous AI agent that classifies news as **REAL**, **FAKE**, **MISLEADING**, **PARTIALLY_FAKE**, **UNVERIFIABLE**, or **SATIRE** — with evidence, sources, and step-by-step reasoning. Exposes a REST API with a web frontend.
+An autonomous AI agent that classifies news as **REAL**, **FAKE**, **MISLEADING**, **PARTIALLY_FAKE**, **UNVERIFIABLE**, **SATIRE**, or **NO_CLAIMS** — with evidence, sources, and step-by-step reasoning. Exposes a REST API with a web frontend.
 
 **→ [github.com/khodossss/verifyn](https://github.com/khodossss/verifyn)**
 
@@ -14,7 +14,7 @@ Most "fake news detectors" are binary classifiers trained on static datasets. Th
 
 | Feature | Typical classifier | Verifyn |
 | --- | --- | --- |
-| Verdict options | Real / Fake | REAL, FAKE, MISLEADING, PARTIALLY_FAKE, UNVERIFIABLE, SATIRE |
+| Verdict options | Real / Fake | REAL, FAKE, MISLEADING, PARTIALLY_FAKE, UNVERIFIABLE, SATIRE, NO_CLAIMS |
 | Evidence | None | Structured `evidence_for` and `evidence_against` with source URLs |
 | Sources | None | Live web search + professional fact-checker cross-reference |
 | Methodology | ML heuristics | 8-step methodology used by professional journalists |
@@ -206,7 +206,7 @@ print(result.summary)
 
 ```python
 class FactCheckResult(BaseModel):
-    verdict: Verdict              # REAL | FAKE | MISLEADING | PARTIALLY_FAKE | UNVERIFIABLE | SATIRE
+    verdict: Verdict              # REAL | FAKE | MISLEADING | PARTIALLY_FAKE | UNVERIFIABLE | SATIRE | NO_CLAIMS
     confidence: float             # 0.0 – 1.0
     confidence_level: str         # HIGH (≥0.8) | MEDIUM (≥0.5) | LOW (<0.5)
     manipulation_type: str        # FABRICATED | CONTEXT_MANIPULATION | OLD_CONTENT_RECYCLED |

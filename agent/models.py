@@ -13,6 +13,7 @@ class Verdict(str, Enum):
     MISLEADING = "MISLEADING"
     UNVERIFIABLE = "UNVERIFIABLE"
     SATIRE = "SATIRE"
+    NO_CLAIMS = "NO_CLAIMS"
 
 
 class ManipulationType(str, Enum):

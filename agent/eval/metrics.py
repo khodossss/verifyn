@@ -16,7 +16,7 @@ from rich.text import Text
 # Core computation
 # ---------------------------------------------------------------------------
 
-VERDICTS = ["REAL", "FAKE", "MISLEADING", "PARTIALLY_FAKE", "UNVERIFIABLE", "SATIRE"]
+VERDICTS = ["REAL", "FAKE", "MISLEADING", "PARTIALLY_FAKE", "UNVERIFIABLE", "SATIRE", "NO_CLAIMS"]
 
 
 def _safe_div(a: float, b: float) -> float:

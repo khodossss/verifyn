@@ -27,7 +27,15 @@ def _minimal() -> dict:
 
 class TestVerdictEnum:
     def test_all_values_exist(self):
-        assert {v.value for v in Verdict} == {"REAL", "FAKE", "MISLEADING", "PARTIALLY_FAKE", "UNVERIFIABLE", "SATIRE"}
+        assert {v.value for v in Verdict} == {
+            "REAL",
+            "FAKE",
+            "MISLEADING",
+            "PARTIALLY_FAKE",
+            "UNVERIFIABLE",
+            "SATIRE",
+            "NO_CLAIMS",
+        }
 
     def test_invalid_verdict_raises(self):
         data = _minimal()

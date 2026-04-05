@@ -94,6 +94,7 @@ SCORING_TABLE: dict[tuple[str, bool], tuple[float, float]] = {
     ("MISLEADING", True): (0.3, 0.7),
     ("SATIRE", True): (0.0, 0.0),
     ("UNVERIFIABLE", True): (0.0, 0.0),
+    ("NO_CLAIMS", True): (0.0, 0.0),
     # evidence_against (supports_claim=False)
     ("REAL", False): (0.0, 1.0),
     ("FAKE", False): (1.0, 0.0),
@@ -101,6 +102,7 @@ SCORING_TABLE: dict[tuple[str, bool], tuple[float, float]] = {
     ("MISLEADING", False): (0.7, 0.3),
     ("SATIRE", False): (0.0, 0.0),
     ("UNVERIFIABLE", False): (0.0, 0.0),
+    ("NO_CLAIMS", False): (0.0, 0.0),
 }
 
 

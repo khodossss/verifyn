@@ -5,5 +5,6 @@ var VERDICT_STYLES = {
   PARTIALLY_FAKE: { bg: '#431407', border: '#f97316', text: '#fff7ed', label: '◑ PARTIALLY FAKE' },
   UNVERIFIABLE:   { bg: '#0f172a', border: '#94a3b8', text: '#f1f5f9', label: '? UNVERIFIABLE' },
   SATIRE:         { bg: '#2e1065', border: '#a855f7', text: '#faf5ff', label: '~ SATIRE' },
+  NO_CLAIMS:      { bg: '#1e1b4b', border: '#6366f1', text: '#eef2ff', label: '— NO CLAIMS' },
 };
 
