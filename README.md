@@ -1,6 +1,6 @@
 # Verifyn — AI Fact-Check Engine
 
-An autonomous AI agent that classifies news as **REAL**, **FAKE**, **MISLEADING**, **PARTIALLY_FAKE**, **UNVERIFIABLE**, or **SATIRE** — with evidence, sources, and step-by-step reasoning. Exposes a REST API consumed by a newspaper-style web frontend.
+An autonomous AI agent that classifies news as **REAL**, **FAKE**, **MISLEADING**, **PARTIALLY_FAKE**, **UNVERIFIABLE**, or **SATIRE** — with evidence, sources, and step-by-step reasoning. Exposes a REST API with a web frontend.
 
 **→ [github.com/khodossss/verifyn](https://github.com/khodossss/verifyn)**
 
@@ -124,7 +124,7 @@ The `check_domain_reputation` tool queries this DB first. If a domain is above t
 
 ## Web Frontend — Verifyn
 
-Newspaper-style web interface served by Nginx at port 3000.
+Web interface served by Nginx at port 3000.
 
 **Start it:**
 
@@ -144,8 +144,12 @@ docker compose up --build
 ### Prerequisites
 
 - Docker + Docker Compose (recommended), **or** Python 3.11+
-- **OPENAI_API_KEY** — from [platform.openai.com](https://platform.openai.com)
-- **TAVILY_API_KEY** — from [app.tavily.com](https://app.tavily.com) (free: 1000 req/month)
+- **LLM API key** — one of the supported providers:
+  - **OpenAI** (`OPENAI_API_KEY`) — [platform.openai.com](https://platform.openai.com)
+  - **Anthropic** (`ANTHROPIC_API_KEY`) — [console.anthropic.com](https://console.anthropic.com)
+  - **Ollama** (no key needed) — [ollama.ai](https://ollama.ai), runs locally
+  - Set `LLM_PROVIDER` in `.env` to choose (`openai` / `anthropic` / `ollama`)
+- **TAVILY_API_KEY** *(optional)* — from [app.tavily.com](https://app.tavily.com) for enhanced search. Set `TAVILY_USE=false` to use DuckDuckGo instead (no key needed)
 
 ### 1. Clone & configure
 
@@ -241,7 +245,7 @@ fake_news_detection/
 │   └── Dockerfile
 │
 ├── website/
-│   ├── index.html             # Newspaper-style UI
+│   ├── index.html             # Web UI
 │   ├── css/                   # Modular CSS (variables, ticker, masthead, results…)
 │   ├── js/                    # Modular JS (app.js, render.js, loading.js…)
 │   ├── nginx.conf

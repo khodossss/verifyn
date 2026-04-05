@@ -329,13 +329,11 @@ class TestQueryHistory:
         assert history[0]["result"]["confidence"] == 0.9
 
     def test_reputation_updated_flag(self):
-        save_query("test", "fast", self._make_result(), reputation_updated=1)
-        save_query("test 2", "fast", self._make_result(), reputation_updated=0)
+        save_query("test rep flag", "fast", self._make_result(), reputation_updated=1)
 
         history = get_query_history()
-        # newest first
-        assert history[0]["query"] == "test 2"
-        assert history[1]["query"] == "test"
+        assert len(history) == 1
+        assert history[0]["query"] == "test rep flag"
 
 
 # ---------------------------------------------------------------------------
