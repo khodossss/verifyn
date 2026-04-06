@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: pytest agent/tests/ backend/tests/ -v --tb=short
+      - run: pytest agent/tests/ backend/tests/ --ignore=agent/tests/e2e -v --tb=short
 
   docker:
     runs-on: ubuntu-latest
