@@ -23,10 +23,10 @@
     <span class="ticker-label">LIVE</span>
     <div style="overflow:hidden;flex:1">
       <div class="ticker-track">
-        8-STEP VERIFICATION METHODOLOGY &nbsp;·&nbsp; LATERAL READING PROTOCOL &nbsp;·&nbsp;
+        9-STEP VERIFICATION METHODOLOGY &nbsp;·&nbsp; LATERAL READING PROTOCOL &nbsp;·&nbsp;
         REAL-TIME SOURCE ANALYSIS &nbsp;·&nbsp; PROFESSIONAL FACT-CHECKER CROSS-REFERENCE &nbsp;·&nbsp;
         DOMAIN REPUTATION SCORING &nbsp;·&nbsp; DETECTING DISINFORMATION &nbsp;·&nbsp;
-        8-STEP VERIFICATION METHODOLOGY &nbsp;·&nbsp; LATERAL READING PROTOCOL &nbsp;·&nbsp;
+        9-STEP VERIFICATION METHODOLOGY &nbsp;·&nbsp; LATERAL READING PROTOCOL &nbsp;·&nbsp;
         REAL-TIME SOURCE ANALYSIS &nbsp;·&nbsp; PROFESSIONAL FACT-CHECKER CROSS-REFERENCE &nbsp;·&nbsp;
         DOMAIN REPUTATION SCORING &nbsp;·&nbsp; DETECTING DISINFORMATION &nbsp;·&nbsp;
       </div>
@@ -54,7 +54,7 @@
       <div class="section-label">Submit Article for Investigation</div>
       <textarea
         id="news-text"
-        placeholder="Paste a news article, headline, or claim here. The AI agent will research it across the web using the 8-step fact-checking methodology…"
+        placeholder="Paste a news article, headline, or claim here. The AI agent will research it across the web using the 9-step fact-checking methodology…"
         oninput="updateCharCount()"
       ></textarea>
       <div class="input-footer">
@@ -158,7 +158,7 @@
 
       <!-- Reasoning -->
       <details class="reasoning-accordion">
-        <summary>Full Analysis — 8-Step Methodology</summary>
+        <summary>Full Analysis</summary>
         <div class="reasoning-text" id="reasoning-text"></div>
       </details>
 
@@ -175,11 +175,12 @@
       <button class="modal-close" onclick="document.getElementById('about-modal').classList.remove('open')">✕ CLOSE</button>
       <div class="modal-title">About Verifyn</div>
       <h2>AI-Driven Fact-Checking at Scale</h2>
-      <p>Verifyn is an autonomous fact-checking engine. Every submission is processed by a ReAct AI agent that independently searches the live web, cross-references primary sources, and applies a structured 8-step verification methodology — without human intervention.</p>
+      <p>Verifyn is an autonomous fact-checking engine. Every submission is processed by a ReAct AI agent that independently searches the live web, cross-references primary sources, and applies a structured 9-step verification methodology — without human intervention.</p>
       <p>This is not a keyword filter or a static database lookup. The agent reasons, searches, reads, and concludes — the same way an investigative journalist would, at machine speed. Built with LangGraph, FastAPI, and OpenAI.</p>
       <hr class="modal-divider" />
-      <div class="modal-title">8-Step Methodology</div>
+      <div class="modal-title">9-Step Methodology</div>
       <ol>
+        <li><strong>History Search</strong> — Check if this or a similar claim has been fact-checked before using embedding similarity search.</li>
         <li><strong>Claim Extraction</strong> — Isolate the core verifiable assertion from the submitted text.</li>
         <li><strong>Primary Source Search</strong> — Locate the original source of the claim via targeted web search.</li>
         <li><strong>Date &amp; Context Verification</strong> — Confirm when the event occurred and whether the framing is current.</li>
@@ -190,7 +191,7 @@
         <li><strong>Classification</strong> — Synthesise all evidence into a verdict with confidence score and structured reasoning.</li>
       </ol>
       <hr class="modal-divider" />
-      <div class="modal-footer">Alexander Khodos &nbsp;·&nbsp; 2026 &nbsp;·&nbsp; For research purposes</div>
+      <div class="modal-footer">Alexander Khodos &nbsp;·&nbsp; 2026</div>
     </div>
   </div>
 

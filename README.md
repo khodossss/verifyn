@@ -17,11 +17,12 @@ Most "fake news detectors" are binary classifiers trained on static datasets. Th
 | Verdict options | Real / Fake | REAL, FAKE, MISLEADING, PARTIALLY_FAKE, UNVERIFIABLE, SATIRE, NO_CLAIMS |
 | Evidence | None | Structured `evidence_for` and `evidence_against` with source URLs |
 | Sources | None | Live web search + professional fact-checker cross-reference |
-| Methodology | ML heuristics | 8-step methodology used by professional journalists |
+| Methodology | ML heuristics | 9-step methodology used by professional journalists |
 | Manipulation type | None | 9 types: FABRICATED, CONTEXT_MANIPULATION, OLD_CONTENT_RECYCLED, … |
 | Explainability | Score only | Full step-by-step reasoning narrative + plain-language summary |
 | Freshness | Frozen at training | Searches the live web — handles breaking news |
 | Source memory | None | Self-learning domain reputation DB — builds a trust map of sources over time |
+| Query memory | None | Embedding-based similarity search — finds previously checked claims instantly |
 
 The core is a [ReAct](https://arxiv.org/abs/2210.03629) agent (Reason → Act → Observe → Repeat) built with **LangGraph** that autonomously decides which tools to call and in what order — until it has enough evidence to reach a verdict.
 
@@ -49,23 +50,25 @@ The core is a [ReAct](https://arxiv.org/abs/2210.03629) agent (Reason → Act �
                Final message 
 ```
 
-The agent follows an 8-step fact-checking methodology:
+The agent follows a 9-step fact-checking methodology:
 
 | Step | Action |
 | --- | --- |
-| 1 | Extract specific, verifiable claims from the text |
-| 2 | Find the **primary source** — original document, transcript, or official statement |
-| 3 | Check **date and context** — is the quote/statistic shown in full? |
-| 4 | **Lateral reading** — 3–5 independent external sources, not just the original site |
-| 5 | Count independent **confirmations or refutations** |
-| 6 | Detect **recycled content** — old photos or quotes repackaged as new |
-| 7 | Search **professional fact-checkers**: Snopes, PolitiFact, Reuters, AFP, Full Fact |
-| 8 | Classify manipulation type and calibrate confidence |
+| 1 | **Search previous fact-checks** — embedding similarity search over query history |
+| 2 | Extract specific, verifiable claims from the text |
+| 3 | Find the **primary source** — original document, transcript, or official statement |
+| 4 | Check **date and context** — is the quote/statistic shown in full? |
+| 5 | **Lateral reading** — 3–5 independent external sources, not just the original site |
+| 6 | Count independent **confirmations or refutations** |
+| 7 | Detect **recycled content** — old photos or quotes repackaged as new |
+| 8 | Search **professional fact-checkers**: Snopes, PolitiFact, Reuters, AFP, Full Fact |
+| 9 | Classify manipulation type and calibrate confidence |
 
 ### Tools Available to the Agent
 
 | Tool | Purpose |
 | --- | --- |
+| `search_similar_queries(query)` | Embedding similarity search in query history (Step 1) |
 | `web_search(query)` | Lateral reading via Tavily (DuckDuckGo fallback) |
 | `search_fact_checkers(claim)` | Scoped search on Snopes, PolitiFact, Reuters, AFP, Full Fact |
 | `check_if_old_news(claim)` | Detect recycled content by finding earliest appearances |
@@ -114,11 +117,40 @@ credibility = true_points / (true_points + false_points)
 
 The `check_domain_reputation` tool queries this DB first. If a domain is above threshold, the web reputation search is skipped entirely — the agent trusts its own accumulated data.
 
-**Deduplication:** the same query (normalized) can only update reputation scores once, preventing a single viral article from inflating domain scores if checked repeatedly.
-
-**Query history:** every fact-check is saved with its full result JSON, enabling analysis of past verdicts and agent behavior over time. Accessible via `GET /history`.
+**Query history:** every fact-check is saved with its full result JSON and an **embedding vector**, enabling similarity search and analysis of past verdicts. Accessible via `GET /history`.
 
 **Research potential:** as the agent processes more claims and its verdict accuracy improves, the domain reputation database becomes a valuable byproduct — an empirically derived trust map of news sources. With high agent accuracy, the accumulated credibility scores can serve as an independent, data-driven source reliability index built from real fact-checking activity rather than editorial judgment.
+
+### Similarity Search (Step 1)
+
+Before running any web searches, the agent checks whether a similar claim has already been fact-checked. This is the **very first step** in the 9-step methodology.
+
+```text
+New query → compute embedding (OpenAI text-embedding-3-small)
+                │
+                ▼
+        Cosine similarity search over query_history
+                │
+        ┌───────┴───────┐
+        ▼               ▼
+   Match found      No match
+   (sim ≥ 0.75)        │
+        │               └──→ Continue with Steps 2–9
+        ▼
+   Agent evaluates:
+   - Is previous result still current?
+   - Has the event evolved?
+   - Adopt or verify with fresh search
+```
+
+**Mode-aware filtering:**
+
+- In `fast` mode → accepts both `precise` and `fast` previous results
+- In `precise` mode → accepts only `precise` previous results
+
+**Why not FAISS?** At current scale (hundreds to low thousands of queries), brute-force cosine similarity via numpy is ~1ms per search. FAISS adds C++ build complexity for zero practical benefit. The architecture supports migration to FAISS at >50K queries — only `find_similar_queries()` needs changing.
+
+**Embeddings:** stored as JSON arrays in SQLite alongside each query result. Model: `text-embedding-3-small` (1536 dims, ~$0.00002/query).
 
 ---
 
@@ -222,7 +254,7 @@ class FactCheckResult(BaseModel):
     fact_checker_results: list[str]
     sources_checked: list[str]
 
-    reasoning: str   # full 8-step walkthrough
+    reasoning: str   # full 9-step walkthrough
     summary: str     # 2–4 sentence plain-language verdict
 ```
 
@@ -251,25 +283,42 @@ fake_news_detection/
 │   ├── nginx.conf
 │   └── Dockerfile             # Nginx static server
 │
-├── data/                      # SQLite DB (domain reputation + query history)
+├── data/                      # SQLite DB (domain reputation + query history + embeddings)
+│
+├── migrations/                # Versioned DB migration scripts
+│   ├── 001_drop_query_hash_add_embedding.py
+│   └── 002_backfill_embeddings.py
+│
+├── docs/                      # Architecture documentation
+│   ├── AGENT_ARCHITECTURE.md
+│   ├── SIMILARITY_SEARCH.md
+│   ├── BACKEND.md
+│   ├── DATA_STORAGE.md
+│   ├── WEBSITE.md
+│   ├── EVALUATION.md
+│   └── INFRASTRUCTURE.md
 │
 └── agent/
     ├── agent.py               # analyze_news() — ReAct loop + Pydantic extraction
     ├── models.py              # FactCheckResult, Verdict, ManipulationType
-    ├── db.py                  # Domain reputation DB + query history (SQLAlchemy)
+    ├── db.py                  # Domain reputation + query history + embeddings (SQLAlchemy)
     ├── run.py                 # CLI entry point (Rich terminal UI)
     ├── evaluate.py            # Evaluation on LIAR, FEVER, FakeNewsNet benchmarks
     ├── prompts/
-    │   └── system.py          # 8-step methodology system prompt
+    │   └── system.py          # 9-step methodology system prompt
     ├── tools/
     │   ├── search.py          # web_search, search_fact_checkers, check_if_old_news
     │   ├── extractor.py       # extract_article_content
-    │   └── domain.py          # check_domain_reputation (DB + web search)
+    │   ├── domain.py          # check_domain_reputation (DB + web search)
+    │   └── similarity.py      # search_similar_queries (embedding cosine similarity)
     ├── eval/
     │   ├── dataset.json       # 20 labeled news items (smoke test)
     │   ├── adapters.py        # LIAR, FEVER, FakeNewsNet dataset loaders
     │   └── metrics.py         # Confusion matrix, F1, classification report
-    └── tests/                 # 180 agent tests (cycle, DB, tools, eval, models)
+    └── tests/
+        ├── unit/              # Fast, fully mocked (284 tests)
+        ├── integration/       # Real DB + tools, mocked LLM (7 tests)
+        └── e2e/               # Real LLM + API calls (18 tests, --run-e2e)
 ```
 
 ---
