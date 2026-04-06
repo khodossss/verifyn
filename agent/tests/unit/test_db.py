@@ -1,4 +1,4 @@
-"""Tests for domain reputation database."""
+"""Tests for domain reputation database and similarity search."""
 
 from __future__ import annotations
 
@@ -9,12 +9,16 @@ import pytest
 # Force SQLite in-memory for tests
 os.environ["DATABASE_URL"] = "sqlite://"
 
+import numpy as np
+
 from agent.db import (
     SCORING_TABLE,
     Base,
+    _cosine_similarity,
     _get_engine,
-    _query_hash,
+    _normalize_query,
     extract_domain,
+    find_similar_queries,
     get_domain,
     get_domain_credibility,
     get_query_history,
@@ -337,67 +341,235 @@ class TestQueryHistory:
 
 
 # ---------------------------------------------------------------------------
-# Deduplication
+# Cosine similarity
 # ---------------------------------------------------------------------------
 
 
-class TestDeduplication:
-    def _make_result(self, verdict="REAL", url="https://reuters.com/a"):
+class TestCosineSimilarity:
+    def test_identical_vectors(self):
+        a = np.array([1.0, 0.0, 0.0])
+        b = np.array([1.0, 0.0, 0.0])
+        assert _cosine_similarity(a, b) == pytest.approx(1.0)
+
+    def test_orthogonal_vectors(self):
+        a = np.array([1.0, 0.0])
+        b = np.array([0.0, 1.0])
+        assert _cosine_similarity(a, b) == pytest.approx(0.0)
+
+    def test_opposite_vectors(self):
+        a = np.array([1.0, 0.0])
+        b = np.array([-1.0, 0.0])
+        assert _cosine_similarity(a, b) == pytest.approx(-1.0)
+
+    def test_zero_vector(self):
+        a = np.array([0.0, 0.0])
+        b = np.array([1.0, 1.0])
+        assert _cosine_similarity(a, b) == 0.0
+
+    def test_similar_vectors(self):
+        a = np.array([1.0, 0.1, 0.0])
+        b = np.array([1.0, 0.2, 0.0])
+        sim = _cosine_similarity(a, b)
+        assert sim > 0.99
+
+
+class TestNormalizeQuery:
+    def test_strips_and_lowercases(self):
+        assert _normalize_query("  Hello World!  ") == "hello world"
+
+    def test_collapses_whitespace(self):
+        assert _normalize_query("  is  the  earth  flat  ") == "is the earth flat"
+
+    def test_strips_punctuation(self):
+        assert _normalize_query("Is the Earth flat?") == "is the earth flat"
+
+
+# ---------------------------------------------------------------------------
+# Similarity search
+# ---------------------------------------------------------------------------
+
+
+class TestFindSimilarQueries:
+    def _make_result(self, verdict="REAL"):
         from unittest.mock import MagicMock
 
         result = MagicMock()
         result.verdict.value = verdict
         result.model_dump.return_value = {"verdict": verdict, "confidence": 0.9}
-        evidence = MagicMock()
-        evidence.url = url
-        result.evidence_for = [evidence]
-        result.evidence_against = []
-        result.sources_checked = []
         return result
 
-    def test_first_query_updates_reputation(self):
-        result = self._make_result("REAL")
-        count = update_reputation_from_result(result, query_text="Is earth round?")
-        assert count == 1
-        assert get_domain("reuters.com").true_points == 1.0
+    def _make_embedding(self, seed: float = 1.0, dims: int = 8) -> list[float]:
+        """Create a simple deterministic embedding for testing."""
+        return [seed * (i + 1) / dims for i in range(dims)]
 
-    def test_duplicate_query_skips_reputation(self):
-        result = self._make_result("REAL")
-        # First time — updates
-        update_reputation_from_result(result, query_text="Is earth round?")
-        save_query("Is earth round?", "fast", result, reputation_updated=1)
+    def test_no_history_returns_empty(self):
+        emb = self._make_embedding()
+        results = find_similar_queries(emb, threshold=0.5)
+        assert results == []
 
-        # Second time — same query, should skip
-        count = update_reputation_from_result(result, query_text="Is earth round?")
-        assert count == 0
-        # Points should not have doubled
-        assert get_domain("reuters.com").true_points == 1.0
+    def test_finds_identical_query(self):
+        emb = self._make_embedding(seed=1.0)
+        save_query("Is the earth round?", "precise", self._make_result(), embedding=emb)
 
-    def test_normalized_duplicate_detected(self):
-        result = self._make_result("REAL")
-        update_reputation_from_result(result, query_text="Is Earth Round?")
-        save_query("Is Earth Round?", "fast", result, reputation_updated=1)
+        results = find_similar_queries(emb, threshold=0.5)
+        assert len(results) == 1
+        assert results[0]["query"] == "Is the earth round?"
+        assert results[0]["similarity"] == pytest.approx(1.0, abs=0.001)
 
-        # Same query with different casing/punctuation
-        count = update_reputation_from_result(result, query_text="is earth round")
-        assert count == 0
+    def test_similar_found_above_threshold(self):
+        emb1 = self._make_embedding(seed=1.0)
+        emb2 = self._make_embedding(seed=1.01)  # very similar
+        save_query("Is the earth round?", "precise", self._make_result(), embedding=emb1)
 
-    def test_different_query_updates_normally(self):
-        result = self._make_result("REAL")
-        update_reputation_from_result(result, query_text="Is earth round?")
-        save_query("Is earth round?", "fast", result, reputation_updated=1)
+        results = find_similar_queries(emb2, threshold=0.99)
+        assert len(results) == 1
 
-        # Different query — should update
-        count = update_reputation_from_result(result, query_text="Is the sky blue?")
-        assert count == 1
-        assert get_domain("reuters.com").true_points == 2.0
+    def test_dissimilar_filtered_by_threshold(self):
+        emb1 = self._make_embedding(seed=1.0)
+        emb2 = [(-1) ** i * v for i, v in enumerate(emb1)]  # very different
+        save_query("Is the earth round?", "precise", self._make_result(), embedding=emb1)
 
-    def test_hash_is_stable(self):
-        h1 = _query_hash("Is the Earth flat?")
-        h2 = _query_hash("Is the Earth flat?")
-        assert h1 == h2
+        results = find_similar_queries(emb2, threshold=0.95)
+        assert len(results) == 0
 
-    def test_hash_normalizes(self):
-        h1 = _query_hash("Is the Earth flat?")
-        h2 = _query_hash("  is  the  earth  flat  ")
-        assert h1 == h2
+    def test_mode_fast_returns_precise_and_fast(self):
+        emb = self._make_embedding()
+        save_query("claim A", "precise", self._make_result(), embedding=emb)
+        save_query("claim B", "fast", self._make_result(), embedding=emb)
+
+        results = find_similar_queries(emb, mode="fast", threshold=0.5)
+        modes = {r["mode"] for r in results}
+        assert "precise" in modes
+        assert "fast" in modes
+
+    def test_mode_precise_excludes_fast(self):
+        emb = self._make_embedding()
+        save_query("claim A", "fast", self._make_result(), embedding=emb)
+
+        results = find_similar_queries(emb, mode="precise", threshold=0.5)
+        assert len(results) == 0
+
+    def test_mode_precise_includes_precise(self):
+        emb = self._make_embedding()
+        save_query("claim A", "precise", self._make_result(), embedding=emb)
+
+        results = find_similar_queries(emb, mode="precise", threshold=0.5)
+        assert len(results) == 1
+
+    def test_top_k_limits_results(self):
+        emb = self._make_embedding()
+        for i in range(5):
+            save_query(f"claim {i}", "precise", self._make_result(), embedding=emb)
+
+        results = find_similar_queries(emb, top_k=2, threshold=0.5)
+        assert len(results) == 2
+
+    def test_deduplicates_by_normalized_query(self):
+        emb = self._make_embedding()
+        save_query("Is the earth round?", "precise", self._make_result("REAL"), embedding=emb)
+        save_query("is the earth round", "precise", self._make_result("FAKE"), embedding=emb)
+
+        results = find_similar_queries(emb, threshold=0.5)
+        # Should return only the latest (FAKE) — dedup by normalized text
+        assert len(results) == 1
+        assert results[0]["result"]["verdict"] == "FAKE"
+
+    def test_queries_without_embedding_ignored(self):
+        emb = self._make_embedding()
+        save_query("no embedding query", "precise", self._make_result())  # no embedding
+        save_query("has embedding", "precise", self._make_result(), embedding=emb)
+
+        results = find_similar_queries(emb, threshold=0.5)
+        assert len(results) == 1
+        assert results[0]["query"] == "has embedding"
+
+    def test_prefers_precise_over_fast_at_equal_similarity(self):
+        emb = self._make_embedding()
+        save_query("claim fast", "fast", self._make_result(), embedding=emb)
+        save_query("claim precise", "precise", self._make_result(), embedding=emb)
+
+        results = find_similar_queries(emb, mode="fast", top_k=2, threshold=0.5)
+        assert results[0]["mode"] == "precise"
+
+    def test_result_contains_verdict_and_confidence(self):
+        """Returned result dict must contain the original FactCheckResult fields."""
+        emb = self._make_embedding()
+        save_query("climate change is real", "precise", self._make_result("REAL"), embedding=emb)
+
+        results = find_similar_queries(emb, threshold=0.5)
+        assert len(results) == 1
+        r = results[0]["result"]
+        assert r["verdict"] == "REAL"
+        assert r["confidence"] == 0.9
+        assert "similarity" in results[0]
+        assert "created_at" in results[0]
+        assert "id" in results[0]
+
+    def test_results_sorted_by_similarity_descending(self):
+        """When multiple matches exist, highest similarity must come first."""
+        base = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        close = [0.99, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # small angle from base
+        farther = [0.7, 0.7, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # 45-degree angle
+
+        save_query("close claim", "precise", self._make_result(), embedding=close)
+        save_query("farther claim", "precise", self._make_result(), embedding=farther)
+
+        results = find_similar_queries(base, top_k=5, threshold=0.5)
+        assert len(results) == 2
+        assert results[0]["similarity"] >= results[1]["similarity"]
+        assert results[0]["query"] == "close claim"
+
+    def test_same_query_different_modes_dedup_keeps_latest(self):
+        """Same normalized query in fast and precise — should dedup to the latest."""
+        emb = self._make_embedding()
+        save_query("earth is round", "fast", self._make_result("REAL"), embedding=emb)
+        save_query("Earth is round!", "precise", self._make_result("FAKE"), embedding=emb)
+
+        results = find_similar_queries(emb, mode="fast", threshold=0.5)
+        # Dedup by normalized text → only latest (FAKE, precise) kept
+        assert len(results) == 1
+        assert results[0]["result"]["verdict"] == "FAKE"
+
+    def test_embedding_stored_and_retrievable(self):
+        """save_query stores embedding and it can be read back."""
+        emb = [0.1, 0.2, 0.3, 0.4]
+        save_query("test embed storage", "fast", self._make_result(), embedding=emb)
+
+        import json as json_mod
+
+        from agent.db import QueryHistory, get_session
+
+        with get_session() as session:
+            record = session.query(QueryHistory).filter_by(query="test embed storage").first()
+            assert record is not None
+            assert record.embedding is not None
+            stored = json_mod.loads(record.embedding)
+            assert stored == emb
+
+    def test_save_query_without_embedding(self):
+        """save_query with no embedding stores None — not found by similarity search."""
+        save_query("no embedding", "fast", self._make_result())
+
+        from agent.db import QueryHistory, get_session
+
+        with get_session() as session:
+            record = session.query(QueryHistory).filter_by(query="no embedding").first()
+            assert record.embedding is None
+
+    def test_mode_fast_finds_precise_only_when_no_fast_exists(self):
+        """Fast mode should still return results even if only precise entries exist."""
+        emb = self._make_embedding()
+        save_query("only precise result", "precise", self._make_result("REAL"), embedding=emb)
+
+        results = find_similar_queries(emb, mode="fast", threshold=0.5)
+        assert len(results) == 1
+        assert results[0]["mode"] == "precise"
+
+    def test_default_threshold_used_when_not_specified(self):
+        """When threshold is not passed, SIMILARITY_THRESHOLD env var is used."""
+        emb = self._make_embedding(seed=1.0)
+        save_query("test threshold", "precise", self._make_result(), embedding=emb)
+
+        # Identical embedding → similarity=1.0, always above any threshold
+        results = find_similar_queries(emb)
+        assert len(results) == 1

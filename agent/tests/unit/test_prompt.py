@@ -7,12 +7,22 @@ class TestSystemPromptContent:
     def test_prompt_nonempty(self):
         assert len(SYSTEM_PROMPT) > 500
 
-    def test_all_eight_steps_present(self):
-        for i in range(1, 9):
+    def test_all_nine_steps_present(self):
+        for i in range(1, 10):
             assert f"Step {i}" in SYSTEM_PROMPT, f"Step {i} missing from system prompt"
+
+    def test_similarity_search_is_step_1(self):
+        """search_similar_queries must be Step 1 — before extract claims."""
+        idx_step1 = SYSTEM_PROMPT.index("Step 1")
+        idx_step2 = SYSTEM_PROMPT.index("Step 2")
+        step1_text = SYSTEM_PROMPT[idx_step1:idx_step2]
+        step2_text = SYSTEM_PROMPT[idx_step2 : idx_step2 + 300]
+        assert "search_similar_queries" in step1_text, "search_similar_queries should be in Step 1"
+        assert "Extract verifiable claims" in step2_text, "Extract claims should be Step 2"
 
     def test_all_tool_names_mentioned(self):
         tools = [
+            "search_similar_queries",
             "web_search",
             "search_fact_checkers",
             "check_if_old_news",

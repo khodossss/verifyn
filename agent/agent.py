@@ -287,7 +287,23 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
     t0 = _time.perf_counter()
 
     llm = _build_llm(reasoning_effort=reasoning_effort)
-    logger.info("analyze_news started: text_len=%d reasoning_effort=%s", len(news_text), reasoning_effort)
+    mode = "fast" if reasoning_effort == "low" else "precise"
+    logger.info("analyze_news started: text_len=%d reasoning_effort=%s mode=%s", len(news_text), reasoning_effort, mode)
+
+    # Compute embedding for similarity search (used by tool + saved later)
+    query_embedding: list[float] | None = None
+    try:
+        from .db import compute_embedding
+
+        query_embedding = compute_embedding(news_text)
+        logger.info("Computed query embedding: %d dimensions", len(query_embedding))
+    except Exception as exc:
+        logger.warning("Failed to compute embedding: %s", exc)
+
+    # Inject current mode into the similarity search tool
+    from .tools.similarity import search_similar_queries as _sim_tool
+
+    _sim_tool._current_mode = mode
 
     # ------------------------------------------------------------------
     # Phase 1: ReAct research agent
@@ -337,14 +353,13 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
     result = _extract_result(_extract_narrative(research_messages))
 
     # ------------------------------------------------------------------
-    # Phase 3: Update domain reputation DB
+    # Phase 3: Update domain reputation DB + save query with embedding
     # ------------------------------------------------------------------
-    mode = "fast" if reasoning_effort == "low" else "precise"
     try:
         from .db import save_query, update_reputation_from_result
 
-        rep_count = update_reputation_from_result(result, mode=mode, query_text=news_text)
-        save_query(news_text, mode, result, reputation_updated=1 if rep_count > 0 else 0)
+        rep_count = update_reputation_from_result(result, mode=mode)
+        save_query(news_text, mode, result, reputation_updated=1 if rep_count > 0 else 0, embedding=query_embedding)
     except Exception as exc:
         logger.warning("Failed to update DB: %s", exc)
 
@@ -361,6 +376,7 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
 
 
 _TOOL_LABELS: dict[str, str] = {
+    "search_similar_queries": "Searching previous fact-checks",
     "web_search": "Searching the web",
     "search_fact_checkers": "Checking fact-checkers",
     "check_if_old_news": "Checking for recycled content",
@@ -380,6 +396,22 @@ def analyze_news_stream(news_text: str, reasoning_effort: str | None = None) -> 
         {"type": "result",    "data": {...}}   — final FactCheckResult dict
         {"type": "error",     "message": "..."} — something went wrong
     """
+    mode = "fast" if reasoning_effort == "low" else "precise"
+
+    # Compute embedding for similarity search + later storage
+    query_embedding: list[float] | None = None
+    try:
+        from .db import compute_embedding
+
+        query_embedding = compute_embedding(news_text)
+    except Exception as exc:
+        logger.warning("Failed to compute embedding: %s", exc)
+
+    # Inject current mode into the similarity search tool
+    from .tools.similarity import search_similar_queries as _sim_tool
+
+    _sim_tool._current_mode = mode
+
     try:
         llm = _build_llm(reasoning_effort=reasoning_effort)
         agent = create_react_agent(model=llm, tools=ALL_TOOLS, prompt=SYSTEM_PROMPT)
@@ -452,13 +484,12 @@ def analyze_news_stream(news_text: str, reasoning_effort: str | None = None) -> 
     try:
         result: FactCheckResult = _extract_result(_extract_narrative(research_messages))
 
-        # Phase 3: Update DB (reputation + query history)
-        mode = "fast" if reasoning_effort == "low" else "precise"
+        # Phase 3: Update DB (reputation + query history with embedding)
         try:
             from .db import save_query, update_reputation_from_result
 
-            rep_count = update_reputation_from_result(result, mode=mode, query_text=news_text)
-            save_query(news_text, mode, result, reputation_updated=1 if rep_count > 0 else 0)
+            rep_count = update_reputation_from_result(result, mode=mode)
+            save_query(news_text, mode, result, reputation_updated=1 if rep_count > 0 else 0, embedding=query_embedding)
         except Exception as exc:
             logger.warning("Failed to update DB: %s", exc)
 

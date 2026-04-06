@@ -1,6 +1,7 @@
 from .domain import check_domain_reputation
 from .extractor import extract_article_content
 from .search import check_if_old_news, search_fact_checkers, web_search
+from .similarity import search_similar_queries
 
 ALL_TOOLS = [
     web_search,
@@ -8,6 +9,7 @@ ALL_TOOLS = [
     check_if_old_news,
     extract_article_content,
     check_domain_reputation,
+    search_similar_queries,
 ]
 
 __all__ = ["ALL_TOOLS"]

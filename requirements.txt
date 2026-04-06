@@ -32,6 +32,10 @@ httpx>=0.27.0
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 
+# Embeddings & similarity search
+openai>=1.0.0
+numpy>=1.24.0
+
 # Data & config
 pydantic>=2.0.0
 json-repair>=0.30.0

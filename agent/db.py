@@ -17,6 +17,16 @@ Schema
         comment         TEXT
     )
 
+    query_history (
+        id              INTEGER PRIMARY KEY,
+        query           TEXT,
+        embedding       TEXT,          -- JSON array of floats (OpenAI embedding)
+        mode            TEXT,          -- 'fast' or 'precise'
+        result          TEXT,          -- JSON FactCheckResult
+        reputation_updated INTEGER,
+        created_at      TIMESTAMP
+    )
+
 Credibility
 -----------
     Once ``true_points + false_points >= CREDIBILITY_THRESHOLD`` (default 50),
@@ -26,11 +36,18 @@ Credibility
 
     Below the threshold, the DB score is treated as preliminary and the agent
     falls back to web-based reputation search.
+
+Similarity search
+-----------------
+    Each saved query stores an OpenAI embedding (text-embedding-3-small).
+    Before running the full agent pipeline, the system searches for similar
+    past queries using cosine similarity.  This enables the agent to leverage
+    previous analyses and avoid redundant work.
 """
 
 from __future__ import annotations
 
-import hashlib
+import json as _json
 import logging
 import os
 import re
@@ -38,6 +55,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
+import numpy as np
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
@@ -74,7 +92,7 @@ class QueryHistory(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     query = Column(Text, nullable=False)
-    query_hash = Column(String, nullable=False, index=True)
+    embedding = Column(Text, nullable=True)  # JSON array of floats (OpenAI embedding)
     mode = Column(String, default="precise")
     result = Column(Text, nullable=False)  # JSON string of FactCheckResult
     reputation_updated = Column(Integer, default=0)  # 1 if this query updated reputation
@@ -242,32 +260,15 @@ MODE_MULTIPLIER: dict[str, float] = {
 
 
 def _normalize_query(text: str) -> str:
-    """Normalize query text for dedup hashing — lowercase, collapse whitespace, strip punctuation."""
+    """Normalize query text — lowercase, collapse whitespace, strip punctuation."""
     text = text.lower().strip()
     text = re.sub(r"[^\w\s]", "", text)
     text = re.sub(r"\s+", " ", text)
     return text
 
 
-def _query_hash(text: str) -> str:
-    """Compute a stable hash for deduplication of similar queries."""
-    return hashlib.sha256(_normalize_query(text).encode("utf-8")).hexdigest()[:16]
-
-
-def _is_duplicate_query(query_text: str) -> bool:
-    """Check if a query with the same hash already updated reputation."""
-    qh = _query_hash(query_text)
-    with get_session() as session:
-        existing = session.query(QueryHistory).filter_by(query_hash=qh, reputation_updated=1).first()
-        return existing is not None
-
-
-def update_reputation_from_result(result: Any, *, mode: str = "precise", query_text: str = "") -> int:
+def update_reputation_from_result(result: Any, *, mode: str = "precise") -> int:
     """Update domain reputation DB from a FactCheckResult.
-
-    Deduplication: if the same query (by normalized hash) already updated
-    reputation scores, this call is skipped. This prevents a single article
-    from inflating scores when the same claim is checked repeatedly.
 
     Parameters
     ----------
@@ -276,16 +277,9 @@ def update_reputation_from_result(result: Any, *, mode: str = "precise", query_t
     mode:
         Inference mode ("fast" or "precise"). Fast mode applies a 0.5x
         multiplier to all score updates since fewer sources were checked.
-    query_text:
-        Original query text for deduplication.
 
-    Returns the number of domain records updated (0 if deduplicated).
+    Returns the number of domain records updated.
     """
-    # Dedup check
-    if query_text and _is_duplicate_query(query_text):
-        logger.info("Skipping reputation update — duplicate query (hash=%s)", _query_hash(query_text))
-        return 0
-
     verdict = result.verdict.value
     multiplier = MODE_MULTIPLIER.get(mode, 1.0)
     updated = 0
@@ -336,10 +330,22 @@ def update_reputation_from_result(result: Any, *, mode: str = "precise", query_t
 # ---------------------------------------------------------------------------
 
 
-def save_query(query_text: str, mode: str, result: Any, *, reputation_updated: int = 0) -> QueryHistory:
-    """Save a fact-check query and its result to the history table."""
-    import json as _json
+def save_query(
+    query_text: str,
+    mode: str,
+    result: Any,
+    *,
+    reputation_updated: int = 0,
+    embedding: list[float] | None = None,
+) -> QueryHistory:
+    """Save a fact-check query and its result to the history table.
 
+    Parameters
+    ----------
+    embedding:
+        OpenAI embedding vector for the query text.  Stored as JSON array
+        for later similarity search.
+    """
     if hasattr(result, "model_dump"):
         result_json = _json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
     elif isinstance(result, dict):
@@ -347,10 +353,12 @@ def save_query(query_text: str, mode: str, result: Any, *, reputation_updated: i
     else:
         result_json = str(result)
 
+    embedding_json = _json.dumps(embedding) if embedding else None
+
     with get_session() as session:
         record = QueryHistory(
             query=query_text,
-            query_hash=_query_hash(query_text),
+            embedding=embedding_json,
             mode=mode,
             result=result_json,
             reputation_updated=reputation_updated,
@@ -359,19 +367,18 @@ def save_query(query_text: str, mode: str, result: Any, *, reputation_updated: i
         session.commit()
         session.refresh(record)
         logger.info(
-            "Saved query #%d: mode=%s verdict=%s rep_updated=%d",
+            "Saved query #%d: mode=%s verdict=%s rep_updated=%d has_embedding=%s",
             record.id,
             mode,
             result.verdict.value if hasattr(result, "verdict") else "?",
             reputation_updated,
+            embedding is not None,
         )
         return record
 
 
 def get_query_history(limit: int = 50) -> list[dict]:
     """Retrieve recent query history."""
-    import json as _json
-
     with get_session() as session:
         records = session.query(QueryHistory).order_by(QueryHistory.created_at.desc()).limit(limit).all()
         return [
@@ -384,3 +391,158 @@ def get_query_history(limit: int = 50) -> list[dict]:
             }
             for r in records
         ]
+
+
+# ---------------------------------------------------------------------------
+# Embeddings
+# ---------------------------------------------------------------------------
+
+EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "openai").lower().strip()
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
+SIMILARITY_THRESHOLD = float(os.environ.get("SIMILARITY_THRESHOLD", "0.75"))
+
+
+def compute_embedding(text: str) -> list[float]:
+    """Compute an embedding vector for *text*.
+
+    Supported providers (EMBEDDING_PROVIDER env var):
+        openai   — OpenAI API (default). Model: text-embedding-3-small.
+        ollama   — Local Ollama server. Model: nomic-embed-text, mxbai-embed-large, etc.
+        custom   — Any OpenAI-compatible endpoint via EMBEDDING_BASE_URL.
+
+    All providers return a list[float] embedding vector.
+    """
+    if EMBEDDING_PROVIDER == "ollama":
+        return _embedding_ollama(text)
+    if EMBEDDING_PROVIDER == "custom":
+        return _embedding_custom(text)
+    return _embedding_openai(text)
+
+
+def _embedding_openai(text: str) -> list[float]:
+    from openai import OpenAI
+
+    kwargs: dict[str, Any] = {"api_key": os.environ["OPENAI_API_KEY"]}
+    if EMBEDDING_BASE_URL:
+        kwargs["base_url"] = EMBEDDING_BASE_URL
+    client = OpenAI(**kwargs)
+    response = client.embeddings.create(model=EMBEDDING_MODEL, input=text)
+    return response.data[0].embedding
+
+
+def _embedding_ollama(text: str) -> list[float]:
+    import requests
+
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    model = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
+    resp = requests.post(
+        f"{base_url}/api/embeddings",
+        json={"model": model, "prompt": text},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["embedding"]
+
+
+def _embedding_custom(text: str) -> list[float]:
+    """Any OpenAI-compatible embeddings endpoint (vLLM, LiteLLM, HuggingFace TEI, etc.)."""
+    from openai import OpenAI
+
+    base_url = EMBEDDING_BASE_URL
+    if not base_url:
+        raise ValueError("EMBEDDING_BASE_URL is required when EMBEDDING_PROVIDER=custom")
+    api_key = os.environ.get("EMBEDDING_API_KEY", os.environ.get("OPENAI_API_KEY", "no-key"))
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    response = client.embeddings.create(model=EMBEDDING_MODEL, input=text)
+    return response.data[0].embedding
+
+
+def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Cosine similarity between two vectors."""
+    dot = np.dot(a, b)
+    norm = np.linalg.norm(a) * np.linalg.norm(b)
+    if norm == 0:
+        return 0.0
+    return float(dot / norm)
+
+
+def find_similar_queries(
+    query_embedding: list[float],
+    *,
+    mode: str = "fast",
+    top_k: int = 3,
+    threshold: float | None = None,
+) -> list[dict]:
+    """Find past queries whose embeddings are similar to *query_embedding*.
+
+    Mode logic
+    ----------
+    - mode='fast'   → return results from 'precise' first, then 'fast'
+    - mode='precise' → return only 'precise' results
+
+    Only the most recent result per unique normalized query is considered.
+
+    Returns list of dicts sorted by similarity (highest first):
+        [{"id", "query", "mode", "result", "similarity", "created_at"}, ...]
+    """
+    if threshold is None:
+        threshold = SIMILARITY_THRESHOLD
+
+    with get_session() as session:
+        # Determine which modes to accept
+        if mode == "precise":
+            allowed_modes = ("precise",)
+        else:
+            allowed_modes = ("precise", "fast")
+
+        records = (
+            session.query(QueryHistory)
+            .filter(
+                QueryHistory.embedding.isnot(None),
+                QueryHistory.mode.in_(allowed_modes),
+            )
+            .order_by(QueryHistory.created_at.desc(), QueryHistory.id.desc())
+            .all()
+        )
+
+    if not records:
+        return []
+
+    query_vec = np.array(query_embedding, dtype=np.float32)
+
+    # Deduplicate: keep only the latest result per normalized query text
+    seen_queries: set[str] = set()
+    unique_records: list[Any] = []
+    for r in records:
+        normalized = _normalize_query(r.query)
+        if normalized not in seen_queries:
+            seen_queries.add(normalized)
+            unique_records.append(r)
+
+    # Compute similarities
+    scored: list[tuple[float, Any]] = []
+    for r in unique_records:
+        stored_vec = np.array(_json.loads(r.embedding), dtype=np.float32)
+        sim = _cosine_similarity(query_vec, stored_vec)
+        if sim >= threshold:
+            scored.append((sim, r))
+
+    # Sort by similarity descending, prefer precise over fast at equal similarity
+    mode_rank = {"precise": 0, "fast": 1}
+    scored.sort(key=lambda x: (-x[0], mode_rank.get(x[1].mode, 2)))
+
+    results = []
+    for sim, r in scored[:top_k]:
+        results.append(
+            {
+                "id": r.id,
+                "query": r.query,
+                "mode": r.mode,
+                "result": _json.loads(r.result),
+                "similarity": round(sim, 4),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+        )
+
+    return results
