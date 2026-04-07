@@ -246,8 +246,8 @@ class TestSimilaritySearchIntegration:
         tool executes against DB, result flows back to agent."""
         _seed_previous_query()
 
-        from langgraph.prebuilt import create_react_agent
-
+        # Use the project's wrapped import (warning suppressed in agent.agent)
+        from agent.agent import create_react_agent
         from agent.prompts import SYSTEM_PROMPT
         from agent.tools import ALL_TOOLS
         from agent.tools.similarity import search_similar_queries
@@ -293,7 +293,13 @@ class TestSimilaritySearchIntegration:
 
         with patch("agent.agent._build_llm", return_value=ScriptedLLM(final_json=FINAL_AGENT_JSON)):
             with patch("agent.agent.create_react_agent") as mock_create:
-                from langgraph.prebuilt import create_react_agent as real_create
+                # Import the real factory directly from langgraph (bypass our patched module ref).
+                # The deprecation warning from this import is filtered globally in pytest.ini.
+                import warnings as _w
+
+                with _w.catch_warnings():
+                    _w.filterwarnings("ignore", category=DeprecationWarning, module="langgraph")
+                    from langgraph.prebuilt import create_react_agent as real_create
 
                 def patched_create(model, tools, prompt):
                     return real_create(model=ScriptedLLM(final_json=FINAL_AGENT_JSON), tools=tools, prompt=prompt)
@@ -320,7 +326,13 @@ class TestSimilaritySearchIntegration:
 
         with patch("agent.agent._build_llm", return_value=ScriptedLLM(final_json=FINAL_AGENT_JSON)):
             with patch("agent.agent.create_react_agent") as mock_create:
-                from langgraph.prebuilt import create_react_agent as real_create
+                # Import the real factory directly from langgraph (bypass our patched module ref).
+                # The deprecation warning from this import is filtered globally in pytest.ini.
+                import warnings as _w
+
+                with _w.catch_warnings():
+                    _w.filterwarnings("ignore", category=DeprecationWarning, module="langgraph")
+                    from langgraph.prebuilt import create_react_agent as real_create
 
                 def patched_create(model, tools, prompt):
                     return real_create(model=ScriptedLLM(final_json=FINAL_AGENT_JSON), tools=tools, prompt=prompt)

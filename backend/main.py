@@ -1,4 +1,4 @@
-"""FastAPI backend for the fake-news detection agent."""
+"""FastAPI backend for the fact-check agent."""
 
 from __future__ import annotations
 
@@ -8,13 +8,11 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from functools import partial
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Configure structured logging
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -27,16 +25,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-# Make the agent package importable when the process starts from this directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent import FactCheckResult, analyze_news, analyze_news_stream  # noqa: E402
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-_EFFORT_MAP = {"fast": "low", "precise": "medium"}
+from agent.constants import MODE_TO_REASONING_EFFORT  # noqa: E402
 
 
 @asynccontextmanager
@@ -47,9 +39,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fake News Detection API",
     description=(
-        "AI-powered fact-checking agent. Follows an 8-step verification methodology: "
-        "claim extraction → primary source → date context → lateral reading → "
-        "confirmations → old-content check → professional fact-checkers → classification."
+        "AI-powered fact-checking agent following a 9-step verification methodology: "
+        "history search, claim extraction, primary source, date context, lateral reading, "
+        "confirmations, old-content check, professional fact-checkers, classification."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -63,20 +55,10 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
-# Request schema
-# ---------------------------------------------------------------------------
-
-
 class AnalyzeRequest(BaseModel):
     text: str = Field(..., min_length=10, description="News article or claim to fact-check")
     verbose: bool = Field(False, description="Stream agent steps to server stdout")
-    mode: str = Field("fast", description="Inference mode: 'fast' (low reasoning) or 'precise' (high reasoning)")
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
+    mode: str = Field("fast", description="Inference mode: 'fast' (low reasoning) or 'precise' (medium reasoning)")
 
 
 @app.get("/", tags=["info"])
@@ -98,7 +80,6 @@ async def health():
 
 @app.get("/history", tags=["info"])
 async def history(limit: int = 50):
-    """Return recent fact-check query history."""
     from agent.db import get_query_history
 
     return get_query_history(limit=limit)
@@ -106,16 +87,15 @@ async def history(limit: int = 50):
 
 @app.post("/analyze/stream", tags=["fact-check"])
 async def analyze_stream(request: AnalyzeRequest):
-    """SSE endpoint — streams agent progress events, then the final result."""
+    """Stream agent progress events as Server-Sent Events, ending with the final result."""
     if not request.text.strip():
         raise HTTPException(status_code=422, detail="text must not be empty")
 
     logger.info("POST /analyze/stream: mode=%s text_len=%d", request.mode, len(request.text))
-    reasoning_effort = _EFFORT_MAP.get(request.mode, "low")
-
-    loop = asyncio.get_event_loop()
+    reasoning_effort = MODE_TO_REASONING_EFFORT.get(request.mode, "low")
 
     async def event_generator():
+        loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
         def run():
@@ -127,7 +107,7 @@ async def analyze_stream(request: AnalyzeRequest):
             finally:
                 asyncio.run_coroutine_threadsafe(queue.put(None), loop)
 
-        asyncio.get_event_loop().run_in_executor(None, run)
+        loop.run_in_executor(None, run)
 
         while True:
             event = await queue.get()
@@ -144,23 +124,19 @@ async def analyze_stream(request: AnalyzeRequest):
 
 @app.post("/analyze", response_model=FactCheckResult, tags=["fact-check"])
 async def analyze(request: AnalyzeRequest):
-    """Submit a news text for AI fact-checking.
-
-    The agent follows an 8-step verification methodology and returns a
-    structured FactCheckResult with verdict, confidence, evidence, and
-    step-by-step reasoning.
-    """
+    """Run the fact-check agent and return a structured FactCheckResult."""
     if not request.text.strip():
         raise HTTPException(status_code=422, detail="text must not be empty")
 
     logger.info("POST /analyze: mode=%s text_len=%d", request.mode, len(request.text))
-    reasoning_effort = _EFFORT_MAP.get(request.mode, "low")
+    reasoning_effort = MODE_TO_REASONING_EFFORT.get(request.mode, "low")
 
-    loop = asyncio.get_event_loop()
     try:
-        result: FactCheckResult = await loop.run_in_executor(
-            None,
-            partial(analyze_news, request.text, verbose=request.verbose, reasoning_effort=reasoning_effort),
+        result: FactCheckResult = await asyncio.to_thread(
+            analyze_news,
+            request.text,
+            verbose=request.verbose,
+            reasoning_effort=reasoning_effort,
         )
     except Exception as exc:
         logger.error("POST /analyze failed: %s", exc)

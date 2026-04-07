@@ -80,21 +80,21 @@ The agent follows a 9-step fact-checking methodology:
 The agent **learns from its own verdicts** over time. After each fact-check, every source domain referenced in evidence is scored:
 
 ```text
-                   Verdict
+                  Verdict
                      │
       ┌──────────────┼──────────────┐
       ▼              ▼              ▼
    evidence_for  evidence_against  sources_checked
       │              │              │
-      └──────┬───────┘──────────────┘
-             ▼
-   Extract domains from URLs
-             │
-             ▼
-   Apply scoring table (verdict × supports_claim)
-             │
-             ▼
-   Upsert domain_reputation DB
+      └──────────────┼──────────────┘
+                     ▼
+         Extract domains from URLs
+                     │
+                     ▼
+         Apply scoring table (verdict × supports_claim)
+                     │
+                     ▼
+         Upsert domain_reputation DB
 ```
 
 **Scoring rules** — each source gets points based on verdict and whether it supported or contradicted the claim:
@@ -167,7 +167,9 @@ docker compose up --build
 
 **UI overview:**
 
-#TODO: insert image
+![Verifyn home page](docs/website_screenshots/1.png)
+![Live agent reasoning](docs/website_screenshots/2.png)
+![Structured fact-check verdict](docs/website_screenshots/3.png)
 
 ---
 

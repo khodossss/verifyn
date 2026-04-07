@@ -1,9 +1,4 @@
-"""Similarity search tool — find previously verified claims in query history.
-
-Uses OpenAI embeddings + cosine similarity to locate past fact-checks
-that are semantically close to the current query.  The agent can then
-decide whether the previous result is still valid or needs updating.
-"""
+"""Similarity search tool: embedding-based lookup of previously verified claims."""
 
 from __future__ import annotations
 
@@ -13,9 +8,18 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("verifyn.similarity")
 
+# Display limits when formatting a previous fact-check for the agent
+MAX_CLAIMS_PREVIEW = 3
+MAX_EVIDENCE_PREVIEW = 4
+MAX_SOURCES_PREVIEW = 5
+EVIDENCE_SUMMARY_PREVIEW_CHARS = 120
+
+# How many similar past queries to return from the DB
+SIMILARITY_TOP_K = 3
+
 
 def _format_previous_result(match: dict) -> str:
-    """Format a single similarity match for the agent."""
+    """Render a similarity match as a markdown block for the agent."""
     r = match["result"]
     lines = [
         f"**Previous query** (similarity={match['similarity']:.2f}, mode={match['mode']}, date={match['created_at']}):",
@@ -26,7 +30,7 @@ def _format_previous_result(match: dict) -> str:
     ]
 
     if r.get("main_claims"):
-        lines.append(f"**Claims:** {'; '.join(r['main_claims'][:3])}")
+        lines.append(f"**Claims:** {'; '.join(r['main_claims'][:MAX_CLAIMS_PREVIEW])}")
 
     if r.get("summary"):
         lines.append(f"**Summary:** {r['summary']}")
@@ -35,14 +39,15 @@ def _format_previous_result(match: dict) -> str:
     evidence_against = r.get("evidence_against", [])
     if evidence_for or evidence_against:
         lines.append(f"**Evidence:** {len(evidence_for)} for, {len(evidence_against)} against")
-        for e in (evidence_for + evidence_against)[:4]:
+        for e in (evidence_for + evidence_against)[:MAX_EVIDENCE_PREVIEW]:
             direction = "FOR" if e.get("supports_claim") else "AGAINST"
             url = e.get("url", "")
-            lines.append(f"  - [{direction}] {e.get('source', '?')}: {e.get('summary', '')[:120]} {url}")
+            summary_preview = e.get("summary", "")[:EVIDENCE_SUMMARY_PREVIEW_CHARS]
+            lines.append(f"  - [{direction}] {e.get('source', '?')}: {summary_preview} {url}")
 
     sources = r.get("sources_checked", [])
     if sources:
-        lines.append(f"**Sources checked:** {', '.join(sources[:5])}")
+        lines.append(f"**Sources checked:** {', '.join(sources[:MAX_SOURCES_PREVIEW])}")
 
     return "\n".join(lines)
 
@@ -70,7 +75,7 @@ def search_similar_queries(query: str) -> str:
     # Mode is injected at runtime via tool metadata; default to fast
     mode = getattr(search_similar_queries, "_current_mode", "fast")
 
-    matches = find_similar_queries(embedding, mode=mode, top_k=3)
+    matches = find_similar_queries(embedding, mode=mode, top_k=SIMILARITY_TOP_K)
 
     if not matches:
         return "No similar previously checked claims found in history."

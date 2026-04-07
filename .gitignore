@@ -51,3 +51,6 @@ agent/eval/fakenewsnet_gossipcop/
 # Evaluation results (generated, kept locally)
 agent/eval/reports/
 agent/eval/reports_0/
+
+# Database backups
+data/*.bak

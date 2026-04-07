@@ -1,49 +1,4 @@
-"""Domain reputation database — learns from agent verdicts over time.
-
-After each fact-check, the agent updates reputation scores for every source
-domain referenced in evidence_for / evidence_against.  Over time, domains
-accumulate true_points and false_points that reflect how often they appear
-in reliable vs unreliable contexts.
-
-Schema
-------
-    domain_reputation (
-        domain          TEXT PRIMARY KEY,
-        true_points     REAL DEFAULT 0,
-        false_points    REAL DEFAULT 0,
-        total_checks    INTEGER DEFAULT 0,
-        first_seen      TIMESTAMP,
-        last_checked    TIMESTAMP,
-        comment         TEXT
-    )
-
-    query_history (
-        id              INTEGER PRIMARY KEY,
-        query           TEXT,
-        embedding       TEXT,          -- JSON array of floats (OpenAI embedding)
-        mode            TEXT,          -- 'fast' or 'precise'
-        result          TEXT,          -- JSON FactCheckResult
-        reputation_updated INTEGER,
-        created_at      TIMESTAMP
-    )
-
-Credibility
------------
-    Once ``true_points + false_points >= CREDIBILITY_THRESHOLD`` (default 50),
-    the domain's credibility score is computed as:
-
-        credibility = true_points / (true_points + false_points)
-
-    Below the threshold, the DB score is treated as preliminary and the agent
-    falls back to web-based reputation search.
-
-Similarity search
------------------
-    Each saved query stores an OpenAI embedding (text-embedding-3-small).
-    Before running the full agent pipeline, the system searches for similar
-    past queries using cosine similarity.  This enables the agent to leverage
-    previous analyses and avoid redundant work.
-"""
+"""SQLAlchemy ORM: domain reputation scoring and query history with embeddings."""
 
 from __future__ import annotations
 
@@ -57,22 +12,22 @@ from urllib.parse import urlparse
 
 import numpy as np
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 logger = logging.getLogger("verifyn.db")
 
-Base = declarative_base()
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
+class Base(DeclarativeBase):
+    pass
+
 
 CREDIBILITY_THRESHOLD = int(os.environ.get("CREDIBILITY_THRESHOLD", "50"))
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///data/verifyn.db")
 
-# ---------------------------------------------------------------------------
-# Model
-# ---------------------------------------------------------------------------
+# Pool config for non-SQLite databases (PostgreSQL etc.)
+DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "5"))
+DB_MAX_OVERFLOW = int(os.environ.get("DB_MAX_OVERFLOW", "10"))
+DB_POOL_RECYCLE_SECONDS = int(os.environ.get("DB_POOL_RECYCLE_SECONDS", "1800"))
 
 
 class DomainReputation(Base):
@@ -92,18 +47,14 @@ class QueryHistory(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     query = Column(Text, nullable=False)
-    embedding = Column(Text, nullable=True)  # JSON array of floats (OpenAI embedding)
+    embedding = Column(Text, nullable=True)  # JSON-serialized float array
     mode = Column(String, default="precise")
-    result = Column(Text, nullable=False)  # JSON string of FactCheckResult
-    reputation_updated = Column(Integer, default=0)  # 1 if this query updated reputation
+    result = Column(Text, nullable=False)  # JSON-serialized FactCheckResult
+    reputation_updated = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
-# ---------------------------------------------------------------------------
-# Scoring rules
-# ---------------------------------------------------------------------------
-
-# (verdict, supports_claim) → (true_delta, false_delta)
+# (verdict, supports_claim) -> (true_delta, false_delta)
 SCORING_TABLE: dict[tuple[str, bool], tuple[float, float]] = {
     # evidence_for (supports_claim=True)
     ("REAL", True): (1.0, 0.0),
@@ -135,7 +86,15 @@ _SessionFactory = None
 def _get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(DATABASE_URL, echo=False)
+        engine_kwargs: dict[str, Any] = {"echo": False}
+        if not DATABASE_URL.startswith("sqlite"):
+            engine_kwargs.update(
+                pool_size=DB_POOL_SIZE,
+                max_overflow=DB_MAX_OVERFLOW,
+                pool_recycle=DB_POOL_RECYCLE_SECONDS,
+                pool_pre_ping=True,
+            )
+        _engine = create_engine(DATABASE_URL, **engine_kwargs)
         Base.metadata.create_all(_engine)
         logger.info("Database connected: %s", DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL)
     return _engine
@@ -148,13 +107,8 @@ def get_session() -> Session:
     return _SessionFactory()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def extract_domain(url: str) -> str | None:
-    """Extract root domain from a URL. Returns None for invalid URLs."""
+    """Return the bare hostname for a URL, or None if it cannot be parsed."""
     if not url or not url.startswith("http"):
         return None
     try:
@@ -167,26 +121,13 @@ def extract_domain(url: str) -> str | None:
         return None
 
 
-# ---------------------------------------------------------------------------
-# CRUD
-# ---------------------------------------------------------------------------
-
-
 def get_domain(domain: str) -> DomainReputation | None:
-    """Look up a domain's reputation record. Returns None if not found."""
     with get_session() as session:
         return session.query(DomainReputation).filter_by(domain=domain.lower()).first()
 
 
 def get_domain_credibility(domain: str) -> dict[str, Any] | None:
-    """Get domain credibility if enough data has accumulated.
-
-    Returns
-    -------
-    dict with keys: domain, true_points, false_points, total_checks,
-                    credibility (float 0-1), above_threshold (bool)
-    None if domain not found in DB.
-    """
+    """Return credibility info for a domain, or None if not in DB."""
     record = get_domain(domain)
     if record is None:
         return None
@@ -212,7 +153,7 @@ def update_domain_scores(
     false_delta: float,
     comment: str = "",
 ) -> DomainReputation:
-    """Upsert a domain's reputation scores."""
+    """Upsert reputation scores for a domain."""
     with get_session() as session:
         record = session.query(DomainReputation).filter_by(domain=domain.lower()).first()
         now = datetime.now(timezone.utc)
@@ -248,11 +189,7 @@ def update_domain_scores(
         return record
 
 
-# ---------------------------------------------------------------------------
-# Post-verdict update
-# ---------------------------------------------------------------------------
-
-# Mode multipliers — fast mode uses fewer searches so scores are less reliable
+# Fast mode applies a 0.5x multiplier (fewer searches => weaker signal)
 MODE_MULTIPLIER: dict[str, float] = {
     "fast": 0.5,
     "precise": 1.0,
@@ -260,7 +197,6 @@ MODE_MULTIPLIER: dict[str, float] = {
 
 
 def _normalize_query(text: str) -> str:
-    """Normalize query text — lowercase, collapse whitespace, strip punctuation."""
     text = text.lower().strip()
     text = re.sub(r"[^\w\s]", "", text)
     text = re.sub(r"\s+", " ", text)
@@ -268,23 +204,11 @@ def _normalize_query(text: str) -> str:
 
 
 def update_reputation_from_result(result: Any, *, mode: str = "precise") -> int:
-    """Update domain reputation DB from a FactCheckResult.
-
-    Parameters
-    ----------
-    result:
-        FactCheckResult with evidence and verdict.
-    mode:
-        Inference mode ("fast" or "precise"). Fast mode applies a 0.5x
-        multiplier to all score updates since fewer sources were checked.
-
-    Returns the number of domain records updated.
-    """
+    """Update domain reputation from a FactCheckResult. Returns count of updates."""
     verdict = result.verdict.value
     multiplier = MODE_MULTIPLIER.get(mode, 1.0)
     updated = 0
 
-    # Collect (domain, supports_claim) pairs from evidence
     evidence_items: list[tuple[str, bool]] = []
 
     for item in result.evidence_for or []:
@@ -299,7 +223,7 @@ def update_reputation_from_result(result: Any, *, mode: str = "precise") -> int:
             if domain:
                 evidence_items.append((domain, False))
 
-    # Also include sources_checked that weren't in evidence
+    # sources_checked URLs that didn't appear in evidence_for/against
     evidence_domains = {d for d, _ in evidence_items}
     for url in result.sources_checked or []:
         domain = extract_domain(url)
@@ -338,14 +262,7 @@ def save_query(
     reputation_updated: int = 0,
     embedding: list[float] | None = None,
 ) -> QueryHistory:
-    """Save a fact-check query and its result to the history table.
-
-    Parameters
-    ----------
-    embedding:
-        OpenAI embedding vector for the query text.  Stored as JSON array
-        for later similarity search.
-    """
+    """Persist a fact-check query and its result. Embedding is stored as JSON."""
     if hasattr(result, "model_dump"):
         result_json = _json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
     elif isinstance(result, dict):
@@ -378,7 +295,6 @@ def save_query(
 
 
 def get_query_history(limit: int = 50) -> list[dict]:
-    """Retrieve recent query history."""
     with get_session() as session:
         records = session.query(QueryHistory).order_by(QueryHistory.created_at.desc()).limit(limit).all()
         return [
@@ -393,26 +309,16 @@ def get_query_history(limit: int = 50) -> list[dict]:
         ]
 
 
-# ---------------------------------------------------------------------------
-# Embeddings
-# ---------------------------------------------------------------------------
-
 EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "openai").lower().strip()
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", "")
 SIMILARITY_THRESHOLD = float(os.environ.get("SIMILARITY_THRESHOLD", "0.75"))
+EMBEDDING_HTTP_TIMEOUT_SECONDS = int(os.environ.get("EMBEDDING_HTTP_TIMEOUT", "30"))
+DEFAULT_SIMILARITY_TOP_K = 3
 
 
 def compute_embedding(text: str) -> list[float]:
-    """Compute an embedding vector for *text*.
-
-    Supported providers (EMBEDDING_PROVIDER env var):
-        openai   — OpenAI API (default). Model: text-embedding-3-small.
-        ollama   — Local Ollama server. Model: nomic-embed-text, mxbai-embed-large, etc.
-        custom   — Any OpenAI-compatible endpoint via EMBEDDING_BASE_URL.
-
-    All providers return a list[float] embedding vector.
-    """
+    """Compute an embedding vector via the configured provider (openai/ollama/custom)."""
     if EMBEDDING_PROVIDER == "ollama":
         return _embedding_ollama(text)
     if EMBEDDING_PROVIDER == "custom":
@@ -439,14 +345,14 @@ def _embedding_ollama(text: str) -> list[float]:
     resp = requests.post(
         f"{base_url}/api/embeddings",
         json={"model": model, "prompt": text},
-        timeout=30,
+        timeout=EMBEDDING_HTTP_TIMEOUT_SECONDS,
     )
     resp.raise_for_status()
     return resp.json()["embedding"]
 
 
 def _embedding_custom(text: str) -> list[float]:
-    """Any OpenAI-compatible embeddings endpoint (vLLM, LiteLLM, HuggingFace TEI, etc.)."""
+    """Embedding via OpenAI-compatible endpoint (vLLM, LiteLLM, TEI, etc.)."""
     from openai import OpenAI
 
     base_url = EMBEDDING_BASE_URL
@@ -459,7 +365,6 @@ def _embedding_custom(text: str) -> list[float]:
 
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Cosine similarity between two vectors."""
     dot = np.dot(a, b)
     norm = np.linalg.norm(a) * np.linalg.norm(b)
     if norm == 0:
@@ -471,26 +376,19 @@ def find_similar_queries(
     query_embedding: list[float],
     *,
     mode: str = "fast",
-    top_k: int = 3,
+    top_k: int = DEFAULT_SIMILARITY_TOP_K,
     threshold: float | None = None,
 ) -> list[dict]:
-    """Find past queries whose embeddings are similar to *query_embedding*.
+    """Return past queries whose embeddings are above *threshold* cosine similarity.
 
-    Mode logic
-    ----------
-    - mode='fast'   → return results from 'precise' first, then 'fast'
-    - mode='precise' → return only 'precise' results
-
-    Only the most recent result per unique normalized query is considered.
-
-    Returns list of dicts sorted by similarity (highest first):
-        [{"id", "query", "mode", "result", "similarity", "created_at"}, ...]
+    In 'precise' mode only precise-mode rows are considered. In 'fast' mode
+    both fast and precise rows are eligible. Results are deduplicated by
+    normalized query text and sorted by similarity descending.
     """
     if threshold is None:
         threshold = SIMILARITY_THRESHOLD
 
     with get_session() as session:
-        # Determine which modes to accept
         if mode == "precise":
             allowed_modes = ("precise",)
         else:
@@ -511,7 +409,7 @@ def find_similar_queries(
 
     query_vec = np.array(query_embedding, dtype=np.float32)
 
-    # Deduplicate: keep only the latest result per normalized query text
+    # Keep only the most recent record per normalized query
     seen_queries: set[str] = set()
     unique_records: list[Any] = []
     for r in records:
@@ -520,7 +418,6 @@ def find_similar_queries(
             seen_queries.add(normalized)
             unique_records.append(r)
 
-    # Compute similarities
     scored: list[tuple[float, Any]] = []
     for r in unique_records:
         stored_vec = np.array(_json.loads(r.embedding), dtype=np.float32)
@@ -528,7 +425,7 @@ def find_similar_queries(
         if sim >= threshold:
             scored.append((sim, r))
 
-    # Sort by similarity descending, prefer precise over fast at equal similarity
+    # Sort by similarity desc; precise mode wins ties
     mode_rank = {"precise": 0, "fast": 1}
     scored.sort(key=lambda x: (-x[0], mode_rank.get(x[1].mode, 2)))
 

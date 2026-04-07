@@ -1,17 +1,7 @@
-"""Migration 002 — Backfill embeddings for existing queries.
+"""Migration 002: backfill OpenAI embeddings for query_history rows.
 
-Computes OpenAI embeddings (text-embedding-3-small) for all query_history
-rows that have embedding=NULL and stores them as JSON arrays.
-
-Usage:
-    python -m migrations.002_backfill_embeddings [--db data/verifyn.db] [--batch-size 50]
-
-Requires:
-    - OPENAI_API_KEY environment variable
-    - openai package installed
-
-Idempotent: only processes rows where embedding IS NULL.
-Can be interrupted and resumed safely.
+Idempotent and resumable. Processes rows where embedding IS NULL.
+Requires OPENAI_API_KEY. Run with: python -m migrations.002_backfill_embeddings
 """
 
 from __future__ import annotations
@@ -50,7 +40,6 @@ def backfill(db_path: str, batch_size: int = 50) -> None:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Check schema
     cursor.execute("PRAGMA table_info(query_history)")
     columns = {row[1] for row in cursor.fetchall()}
     if "embedding" not in columns:
@@ -58,7 +47,6 @@ def backfill(db_path: str, batch_size: int = 50) -> None:
         conn.close()
         sys.exit(1)
 
-    # Fetch rows without embeddings
     cursor.execute("SELECT id, query FROM query_history WHERE embedding IS NULL ORDER BY id")
     rows = cursor.fetchall()
 
@@ -93,10 +81,9 @@ def backfill(db_path: str, batch_size: int = 50) -> None:
         total_batches = (len(rows) + batch_size - 1) // batch_size
         print(f"  Batch {batch_num}/{total_batches}: {len(batch)} embeddings computed")
 
-        # Commit after each batch for resume safety
+        # Commit per batch so the migration is resumable
         conn.commit()
 
-    # Final verification
     cursor.execute("SELECT COUNT(*) FROM query_history WHERE embedding IS NOT NULL")
     with_emb = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM query_history WHERE embedding IS NULL")

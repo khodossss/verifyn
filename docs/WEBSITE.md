@@ -4,6 +4,12 @@
 
 The frontend is a **single-page application** built with vanilla JavaScript, served by Nginx. It communicates with the backend via SSE streaming for real-time progress updates during fact-checking.
 
+## Screenshots
+
+![Verifyn home page](website_screenshots/1.png)
+![Live agent reasoning](website_screenshots/2.png)
+![Structured fact-check verdict](website_screenshots/3.png)
+
 ## Architecture
 
 ```

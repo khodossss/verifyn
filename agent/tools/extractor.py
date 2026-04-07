@@ -1,10 +1,13 @@
-"""Article content extraction tool — uses trafilatura for clean text extraction."""
+"""Article content extraction via trafilatura, with BeautifulSoup fallback."""
 
 from __future__ import annotations
 
 import re
 
 from langchain_core.tools import tool
+
+MAX_ARTICLE_CHARS = 4000
+FALLBACK_HTTP_TIMEOUT_SECONDS = 10
 
 
 @tool
@@ -40,8 +43,8 @@ def extract_article_content(url: str) -> str:
         text = data.get("text", "")
 
         # Truncate very long articles to save context
-        if len(text) > 4000:
-            text = text[:4000] + "\n\n[... truncated ...]"
+        if len(text) > MAX_ARTICLE_CHARS:
+            text = text[:MAX_ARTICLE_CHARS] + "\n\n[... truncated ...]"
 
         return f"**Title:** {title}\n**Date:** {date}\n**Author:** {author}\n**URL:** {url}\n\n**Content:**\n{text}"
 
@@ -52,7 +55,7 @@ def extract_article_content(url: str) -> str:
             from bs4 import BeautifulSoup
 
             headers = {"User-Agent": "Mozilla/5.0 (compatible; FactCheckBot/1.0)"}
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = requests.get(url, headers=headers, timeout=FALLBACK_HTTP_TIMEOUT_SECONDS)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -62,7 +65,7 @@ def extract_article_content(url: str) -> str:
 
             title = soup.title.get_text(strip=True) if soup.title else ""
             body = soup.get_text(separator="\n", strip=True)
-            body = re.sub(r"\n{3,}", "\n\n", body)[:4000]
+            body = re.sub(r"\n{3,}", "\n\n", body)[:MAX_ARTICLE_CHARS]
 
             return f"**Title:** {title}\n**URL:** {url}\n\n**Content (fallback extraction):**\n{body}"
 

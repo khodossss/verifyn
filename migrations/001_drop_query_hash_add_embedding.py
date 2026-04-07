@@ -1,13 +1,6 @@
-"""Migration 001 — Drop query_hash, add embedding column.
+"""Migration 001: drop query_hash, add embedding column.
 
-Replaces the hash-based deduplication with embedding-based similarity search.
-The query_hash column is removed and an embedding column (TEXT, nullable) is
-added to store JSON-serialized OpenAI embedding vectors.
-
-Usage:
-    python -m migrations.001_drop_query_hash_add_embedding [--db data/verifyn.db]
-
-Idempotent: safe to run multiple times.
+Idempotent. Run with: python -m migrations.001_drop_query_hash_add_embedding
 """
 
 from __future__ import annotations
@@ -28,7 +21,6 @@ def migrate(db_path: str) -> None:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Check current schema
     cursor.execute("PRAGMA table_info(query_history)")
     columns = {row[1] for row in cursor.fetchall()}
 
@@ -44,12 +36,10 @@ def migrate(db_path: str) -> None:
         conn.close()
         return
 
-    # Backup
     backup_path = f"{db_path}.pre-001.bak"
     shutil.copy2(db_path, backup_path)
     print(f"Backup created: {backup_path}")
 
-    # Recreate table without query_hash, with embedding
     cursor.execute(
         """
         CREATE TABLE query_history_new (
@@ -78,7 +68,6 @@ def migrate(db_path: str) -> None:
 
     conn.commit()
 
-    # Verify
     cursor.execute("PRAGMA table_info(query_history)")
     new_columns = [row[1] for row in cursor.fetchall()]
     cursor.execute("SELECT COUNT(*) FROM query_history")

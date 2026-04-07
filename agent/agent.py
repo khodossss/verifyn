@@ -1,13 +1,4 @@
-"""Fake-news detection agent.
-
-Flow
-----
-1. ReAct research phase  — LangGraph prebuilt agent uses tools to gather evidence
-   following the 8-step fact-check methodology.  The agent is instructed to end
-   its final message with a ```json ... ``` block containing a FactCheckResult.
-2. Extraction phase      — Try to parse that JSON block directly with Pydantic.
-   If parsing fails, make one fallback LLM call to repair the JSON.
-"""
+"""Fact-check agent: ReAct research loop + Pydantic extraction."""
 
 from __future__ import annotations
 
@@ -15,31 +6,33 @@ import json
 import logging
 import os
 import re
+import warnings
 from collections.abc import Generator
 from datetime import date
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.prebuilt import create_react_agent
+
+# Suppress LangGraph 1.0 internal deprecation warning (not actionable from user code)
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module="langgraph")
+    from langgraph.prebuilt import create_react_agent
+
 from langsmith import traceable
 
+from .constants import (
+    AGENT_RECURSION_LIMIT,
+    LLM_DEFAULT_TEMPERATURE,
+    LLM_MAX_TOKENS,
+    MAX_EXTRACT_ATTEMPTS,
+    MAX_SEARCH_BUDGET,
+)
 from .models import FactCheckResult
 from .prompts import SYSTEM_PROMPT
 from .tools import ALL_TOOLS
 
 logger = logging.getLogger("verifyn")
-
-# ---------------------------------------------------------------------------
-# LLM setup — multi-provider via LLM_PROVIDER env var
-# ---------------------------------------------------------------------------
-# Supported providers:
-#   openai    — OpenAI / Azure OpenAI  (default)
-#   anthropic — Anthropic Claude
-#   ollama    — Local models via Ollama
-#
-# Set LLM_PROVIDER + the corresponding API key / model env vars.
-# ---------------------------------------------------------------------------
 
 _PROVIDER_ENV = {
     "openai": {"key": "OPENAI_API_KEY", "model": "OPENAI_MODEL", "default_model": "gpt-4o-mini"},
@@ -48,11 +41,8 @@ _PROVIDER_ENV = {
 }
 
 
-def _build_llm(temperature: float = 0.0, reasoning_effort: str | None = None) -> BaseChatModel:
-    """Build a chat model based on the LLM_PROVIDER environment variable.
-
-    Supported providers: openai (default), anthropic, ollama.
-    """
+def _build_llm(temperature: float = LLM_DEFAULT_TEMPERATURE, reasoning_effort: str | None = None) -> BaseChatModel:
+    """Build a chat model from LLM_PROVIDER env config."""
     provider = os.environ.get("LLM_PROVIDER", "openai").lower().strip()
     if provider not in _PROVIDER_ENV:
         raise ValueError(f"Unknown LLM_PROVIDER={provider!r}. Supported: {', '.join(_PROVIDER_ENV)}")
@@ -68,7 +58,7 @@ def _build_llm(temperature: float = 0.0, reasoning_effort: str | None = None) ->
         kwargs: dict[str, Any] = dict(
             model=model,
             temperature=temperature,
-            max_tokens=8192,
+            max_tokens=LLM_MAX_TOKENS,
             api_key=os.environ[cfg["key"]],
         )
         if reasoning_effort:
@@ -81,7 +71,7 @@ def _build_llm(temperature: float = 0.0, reasoning_effort: str | None = None) ->
         return ChatAnthropic(
             model=model,
             temperature=temperature,
-            max_tokens=8192,
+            max_tokens=LLM_MAX_TOKENS,
             api_key=os.environ[cfg["key"]],
         )
 
@@ -108,8 +98,8 @@ REPAIR_SYSTEM = (
     "You are a JSON repair assistant. The user will give you either a broken/incomplete "
     "FactCheckResult JSON or a research narrative written by a fact-checking agent. "
     "Your job: extract or reconstruct a valid FactCheckResult JSON from whatever is provided. "
-    "Return ONLY a valid JSON object — no markdown, no explanation, no code fences. "
-    "Required fields: verdict, confidence (float 0.0–1.0), confidence_level, manipulation_type, reasoning, summary. "
+    "Return ONLY a valid JSON object: no markdown, no explanation, no code fences. "
+    "Required fields: verdict, confidence (float 0.0-1.0), confidence_level, manipulation_type, reasoning, summary. "
     "verdict must be one of: REAL, FAKE, PARTIALLY_FAKE, MISLEADING, UNVERIFIABLE, SATIRE, NO_CLAIMS. "
     "confidence_level must be HIGH, MEDIUM, or LOW. "
     "manipulation_type must be one of: NONE, FABRICATED, CONTEXT_MANIPULATION, "
@@ -122,42 +112,33 @@ REPAIR_SYSTEM = (
 
 
 def _sanitize_json(data: dict) -> dict:
-    """Fix common LLM JSON quirks before Pydantic validation."""
-    # manipulation_type: "A|B" → take first value
+    """Normalize common LLM JSON quirks before Pydantic validation."""
     mt = data.get("manipulation_type", "")
     if isinstance(mt, str) and "|" in mt:
         data["manipulation_type"] = mt.split("|")[0].strip()
-    # confidence_level: normalise to uppercase
     cl = data.get("confidence_level")
     if isinstance(cl, str):
         data["confidence_level"] = cl.upper().strip()
-    # verdict: normalise to uppercase
     v = data.get("verdict")
     if isinstance(v, str):
         data["verdict"] = v.upper().strip()
     return data
 
 
-MAX_EXTRACT_ATTEMPTS = 3
-
-
 def _try_parse(text: str) -> FactCheckResult | None:
-    """Try to parse FactCheckResult from text using json_repair. Returns None on failure."""
+    """Parse FactCheckResult from text via json_repair, or return None."""
     from json_repair import repair_json
 
     candidates: list[str] = []
 
-    # 1. ```json block
     match = _JSON_BLOCK_RE.search(text)
     if match:
         candidates.append(match.group(1))
 
-    # 2. First { ... } span containing "verdict"
     start = text.find("{")
     if start != -1:
         candidates.append(text[start:])
 
-    # 3. The whole text
     candidates.append(text)
 
     for candidate in candidates:
@@ -171,13 +152,7 @@ def _try_parse(text: str) -> FactCheckResult | None:
 
 
 def _extract_result(research_narrative: str) -> FactCheckResult:
-    """Parse FactCheckResult from the agent's narrative.
-
-    Loop up to MAX_EXTRACT_ATTEMPTS times:
-      1. Pydantic parse (with sanitization)
-      2. LLM repair call → Pydantic parse
-    """
-    # Attempt 0: direct parse from narrative
+    """Parse FactCheckResult from the agent narrative, with LLM repair fallback."""
     result = _try_parse(research_narrative)
     if result:
         logger.info(
@@ -207,7 +182,6 @@ def _extract_result(research_narrative: str) -> FactCheckResult:
             )
             return result
 
-        # Feed the failed output back as input for next attempt
         last_error = None
         try:
             json.loads(response.content)
@@ -224,36 +198,33 @@ def _extract_result(research_narrative: str) -> FactCheckResult:
     )
 
 
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-
 def _build_user_message(news_text: str) -> str:
     today = date.today().strftime("%Y-%m-%d")
     return (
         "Please fact-check the following news text.\n"
-        "Hard limit: 5 unique searches. STOP RULE: if you have 3+ credible sources agreeing and none contradicting — write your conclusion immediately, no more searches.\n\n"
+        f"Hard limit: {MAX_SEARCH_BUDGET} unique searches. "
+        "STOP RULE: if you have 3+ credible sources agreeing and none contradicting, "
+        "write your conclusion immediately, no more searches.\n\n"
         f"TODAY'S DATE: {today}\n"
-        "If no publication date is mentioned in the news text, treat the date as UNKNOWN — "
-        "do not assume or infer a date.\n\n"
+        "If no publication date is mentioned in the news text, treat the date as UNKNOWN. "
+        "Do not assume or infer a date.\n\n"
         f'NEWS TEXT:\n"""\n{news_text}\n"""'
     )
 
 
 def _extract_narrative(research_messages: list[Any]) -> str:
-    """Pick the best AI message as research narrative for extraction."""
-    # 1. Prefer message with JSON block
+    """Select the best AI message to feed into result extraction."""
+    # Prefer message containing a JSON block
     for msg in reversed(research_messages):
         if isinstance(msg, AIMessage) and isinstance(msg.content, str) and _JSON_BLOCK_RE.search(msg.content):
             return msg.content
 
-    # 2. Last non-empty AI message
+    # Fall back to the last non-empty AI message
     for msg in reversed(research_messages):
         if isinstance(msg, AIMessage) and isinstance(msg.content, str) and msg.content.strip():
             return msg.content
 
-    # 3. Concatenate all AI text
+    # Last resort: concatenate all AI text
     parts: list[str] = []
     for msg in research_messages:
         if isinstance(msg, AIMessage) and isinstance(msg.content, str):
@@ -261,27 +232,9 @@ def _extract_narrative(research_messages: list[Any]) -> str:
     return "\n".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 @traceable(name="analyze_news")
 def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str | None = None) -> FactCheckResult:
-    """Analyse a news text and return a structured FactCheckResult.
-
-    Parameters
-    ----------
-    news_text:
-        The raw news article or claim to be verified.
-    verbose:
-        If True, stream and print each step of the agent's reasoning.
-
-    Returns
-    -------
-    FactCheckResult
-        Typed verdict with evidence, sources, reasoning, and confidence score.
-    """
+    """Run the fact-check agent on news_text and return a structured verdict."""
     import time as _time
 
     t0 = _time.perf_counter()
@@ -290,7 +243,6 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
     mode = "fast" if reasoning_effort == "low" else "precise"
     logger.info("analyze_news started: text_len=%d reasoning_effort=%s mode=%s", len(news_text), reasoning_effort, mode)
 
-    # Compute embedding for similarity search (used by tool + saved later)
     query_embedding: list[float] | None = None
     try:
         from .db import compute_embedding
@@ -300,14 +252,11 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
     except Exception as exc:
         logger.warning("Failed to compute embedding: %s", exc)
 
-    # Inject current mode into the similarity search tool
     from .tools.similarity import search_similar_queries as _sim_tool
 
     _sim_tool._current_mode = mode
 
-    # ------------------------------------------------------------------
-    # Phase 1: ReAct research agent
-    # ------------------------------------------------------------------
+    # Phase 1: ReAct research
     agent = create_react_agent(
         model=llm,
         tools=ALL_TOOLS,
@@ -324,8 +273,7 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
     for chunk in agent.stream(
         {"messages": [HumanMessage(content=user_message)]},
         stream_mode="values",
-        # 14 iterations = system + user + up to 5 tool calls (call+result each) + final answer + buffer
-        config={"recursion_limit": 14},
+        config={"recursion_limit": AGENT_RECURSION_LIMIT},
     ):
         msgs = chunk.get("messages", [])
         if msgs:
@@ -344,17 +292,13 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
         len(research_messages),
     )
 
-    # ------------------------------------------------------------------
-    # Phase 2: Structured extraction
-    # ------------------------------------------------------------------
+    # Phase 2: structured extraction
     if verbose:
         print("\n[AGENT] Extracting structured verdict...\n")
 
     result = _extract_result(_extract_narrative(research_messages))
 
-    # ------------------------------------------------------------------
-    # Phase 3: Update domain reputation DB + save query with embedding
-    # ------------------------------------------------------------------
+    # Phase 3: persist results
     try:
         from .db import save_query, update_reputation_from_result
 
@@ -387,18 +331,12 @@ _TOOL_LABELS: dict[str, str] = {
 
 @traceable(name="analyze_news_stream")
 def analyze_news_stream(news_text: str, reasoning_effort: str | None = None) -> Generator[dict, None, None]:
-    """Like analyze_news but yields progress events as dicts.
+    """Streaming version of analyze_news yielding progress events as dicts.
 
-    Event shapes:
-        {"type": "thinking",  "text": "..."}   — agent is reasoning
-        {"type": "tool_call", "tool": "...", "query": "..."}  — tool invoked
-        {"type": "extracting"}                 — phase 2 started
-        {"type": "result",    "data": {...}}   — final FactCheckResult dict
-        {"type": "error",     "message": "..."} — something went wrong
+    Event types: thinking, tool_call, tool_result, extracting, result, error.
     """
     mode = "fast" if reasoning_effort == "low" else "precise"
 
-    # Compute embedding for similarity search + later storage
     query_embedding: list[float] | None = None
     try:
         from .db import compute_embedding
@@ -407,7 +345,6 @@ def analyze_news_stream(news_text: str, reasoning_effort: str | None = None) -> 
     except Exception as exc:
         logger.warning("Failed to compute embedding: %s", exc)
 
-    # Inject current mode into the similarity search tool
     from .tools.similarity import search_similar_queries as _sim_tool
 
     _sim_tool._current_mode = mode
@@ -427,7 +364,7 @@ def analyze_news_stream(news_text: str, reasoning_effort: str | None = None) -> 
         for chunk in agent.stream(
             {"messages": [HumanMessage(content=user_message)]},
             stream_mode="values",
-            config={"recursion_limit": 14},
+            config={"recursion_limit": AGENT_RECURSION_LIMIT},
         ):
             msgs = chunk.get("messages", [])
             if not msgs:
@@ -478,13 +415,11 @@ def analyze_news_stream(news_text: str, reasoning_effort: str | None = None) -> 
         yield {"type": "error", "message": str(exc)}
         return
 
-    # Phase 2
     yield {"type": "extracting"}
 
     try:
         result: FactCheckResult = _extract_result(_extract_narrative(research_messages))
 
-        # Phase 3: Update DB (reputation + query history with embedding)
         try:
             from .db import save_query, update_reputation_from_result
 
@@ -496,11 +431,6 @@ def analyze_news_stream(news_text: str, reasoning_effort: str | None = None) -> 
         yield {"type": "result", "data": result.model_dump(mode="json")}
     except Exception as exc:
         yield {"type": "error", "message": f"Failed to structure result: {exc}"}
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _print_message(msg: Any) -> None:
