@@ -30,6 +30,8 @@ The core is a [ReAct](https://arxiv.org/abs/2210.03629) agent (Reason → Act �
 
 ## How It Works
 
+> **Full architecture details:** [docs/AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md)
+
 ### ReAct Research Loop
 
 ```text
@@ -77,6 +79,8 @@ The agent follows a 9-step fact-checking methodology:
 
 ### Domain Reputation Database
 
+> **Full schema and scoring rules:** [docs/DATA_STORAGE.md](docs/DATA_STORAGE.md)
+
 The agent **learns from its own verdicts** over time. After each fact-check, every source domain referenced in evidence is scored:
 
 ```text
@@ -123,6 +127,8 @@ The `check_domain_reputation` tool queries this DB first. If a domain is above t
 
 ### Similarity Search (Step 1)
 
+> **Embedding model, mode logic, FAISS migration path:** [docs/SIMILARITY_SEARCH.md](docs/SIMILARITY_SEARCH.md)
+
 Before running any web searches, the agent checks whether a similar claim has already been fact-checked. This is the **very first step** in the 9-step methodology.
 
 ```text
@@ -156,6 +162,8 @@ New query → compute embedding (OpenAI text-embedding-3-small)
 
 ## Web Frontend — Verifyn
 
+> **Frontend stack, SSE handling, Nginx config:** [docs/WEBSITE.md](docs/WEBSITE.md)
+
 Web interface served by Nginx at port 3000.
 
 **Start it:**
@@ -173,7 +181,42 @@ docker compose up --build
 
 ---
 
+## Evaluation
+
+> **Methodology, per-dataset analysis, soft-scoring justification:** [docs/EVALUATION.md](docs/EVALUATION.md)
+
+The agent was benchmarked against five public fake-news datasets, balanced 16 REAL + 16 FAKE per dataset (32 items each, 160 total), running with `gpt-5-nano-2025-08-07`, concurrency 20, no DB caching.
+
+To separate "agent got it wrong" from "agent's taxonomy is finer than the dataset's", the same runs were re-scored with:
+
+- `REAL` → REAL
+- `FAKE | MISLEADING | PARTIALLY_FAKE | SATIRE` → FAKE
+- `UNVERIFIABLE | NO_CLAIMS | ERROR` → excluded from scoring (selective-prediction convention)
+
+| Dataset | Strict acc | **Soft acc** | Soft F1 | Scored | Excluded |
+|---------|----------:|-------------:|--------:|-------:|---------:|
+| **FEVER** | 69% | **92%** | 0.92 | 25/32 | 7 |
+| WELFake | 38% | **89%** | 0.86 | 18/32 | 14 |
+| FakeNewsNet PolitiFact | 41% | **84%** | 0.84 | 19/32 | 13 |
+| LIAR | 28% | **78%** | 0.81 | 18/32 | 14 |
+| FakeNewsNet GossipCop | 34% | **69%** | 0.58 | 16/32 | 16 |
+
+Per-dataset reports: [`docs/reports/<dataset>.md`](docs/reports/) (strict) and `<dataset>_soft.md` (soft). Run any single benchmark with:
+
+```bash
+python -m agent.eval.scripts.eval_fever
+python -m agent.eval.scripts.eval_liar
+python -m agent.eval.scripts.eval_welfake
+python -m agent.eval.scripts.eval_fakenewsnet_politifact
+python -m agent.eval.scripts.eval_fakenewsnet_gossipcop
+python -m agent.eval.scripts.rescore_soft   # regenerate _soft.md from existing JSON
+```
+
+---
+
 ## Setup
+
+> **Docker Compose, CI, env vars, deployment:** [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md)
 
 ### Prerequisites
 

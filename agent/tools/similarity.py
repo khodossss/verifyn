@@ -64,6 +64,11 @@ def search_similar_queries(query: str) -> str:
     IMPORTANT: Previous results may be outdated if the event has evolved.
     Always verify that the result is still current before reusing it.
     """
+    import os as _os
+
+    if _os.environ.get("VERIFYN_EVAL_MODE") == "1":
+        return "Similarity search disabled in eval mode."
+
     from agent.db import compute_embedding, find_similar_queries
 
     try:

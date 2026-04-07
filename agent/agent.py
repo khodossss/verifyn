@@ -241,16 +241,24 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
 
     llm = _build_llm(reasoning_effort=reasoning_effort)
     mode = "fast" if reasoning_effort == "low" else "precise"
-    logger.info("analyze_news started: text_len=%d reasoning_effort=%s mode=%s", len(news_text), reasoning_effort, mode)
+    eval_mode = os.environ.get("VERIFYN_EVAL_MODE") == "1"
+    logger.info(
+        "analyze_news started: text_len=%d reasoning_effort=%s mode=%s eval_mode=%s",
+        len(news_text),
+        reasoning_effort,
+        mode,
+        eval_mode,
+    )
 
     query_embedding: list[float] | None = None
-    try:
-        from .db import compute_embedding
+    if not eval_mode:
+        try:
+            from .db import compute_embedding
 
-        query_embedding = compute_embedding(news_text)
-        logger.info("Computed query embedding: %d dimensions", len(query_embedding))
-    except Exception as exc:
-        logger.warning("Failed to compute embedding: %s", exc)
+            query_embedding = compute_embedding(news_text)
+            logger.info("Computed query embedding: %d dimensions", len(query_embedding))
+        except Exception as exc:
+            logger.warning("Failed to compute embedding: %s", exc)
 
     from .tools.similarity import search_similar_queries as _sim_tool
 
@@ -298,14 +306,15 @@ def analyze_news(news_text: str, *, verbose: bool = False, reasoning_effort: str
 
     result = _extract_result(_extract_narrative(research_messages))
 
-    # Phase 3: persist results
-    try:
-        from .db import save_query, update_reputation_from_result
+    # Phase 3: persist results (skipped in eval mode)
+    if not eval_mode:
+        try:
+            from .db import save_query, update_reputation_from_result
 
-        rep_count = update_reputation_from_result(result, mode=mode)
-        save_query(news_text, mode, result, reputation_updated=1 if rep_count > 0 else 0, embedding=query_embedding)
-    except Exception as exc:
-        logger.warning("Failed to update DB: %s", exc)
+            rep_count = update_reputation_from_result(result, mode=mode)
+            save_query(news_text, mode, result, reputation_updated=1 if rep_count > 0 else 0, embedding=query_embedding)
+        except Exception as exc:
+            logger.warning("Failed to update DB: %s", exc)
 
     total_elapsed = _time.perf_counter() - t0
     logger.info(

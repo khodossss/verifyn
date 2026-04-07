@@ -13,3 +13,4 @@ ignore = [
 "agent/run.py" = ["E402"]          # sys.path before imports
 "backend/tests/*" = ["E402", "F401"]
 "agent/tests/*" = ["E402"]         # DATABASE_URL must be set before agent.db imports
+"agent/eval/scripts/*" = ["E402"]  # load_dotenv() must run before agent imports

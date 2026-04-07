@@ -41,16 +41,8 @@ res.txt
 # Database files
 data/*.db
 
-# Evaluation datasets (downloaded, not committed)
-agent/eval/liar/
-agent/eval/fever/
-agent/eval/fakenewsnet/
-agent/eval/fakenewsnet_politifact/
-agent/eval/fakenewsnet_gossipcop/
-
-# Evaluation results (generated, kept locally)
-agent/eval/reports/
-agent/eval/reports_0/
+# Evaluation datasets (downloaded, not committed — see agent/eval/adapters.py for sources)
+agent/eval/datasets/
 
 # Database backups
 data/*.bak

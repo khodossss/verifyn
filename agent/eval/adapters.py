@@ -1,19 +1,30 @@
-"""Dataset adapters — load LIAR, FEVER, FakeNewsNet, or custom JSON into a unified format.
+"""Dataset adapters: load LIAR, FEVER, FakeNewsNet, WELFake, or custom JSON.
 
 Each adapter returns a list of dicts:
     {"id": ..., "text": ..., "expected_verdict": ..., "expected_manipulation": ..., "notes": ...}
 
 Download instructions
 ---------------------
-LIAR:         https://www.cs.ucsb.edu/~william/data/liar_dataset.zip
-              Unzip → place ``train.tsv`` / ``test.tsv`` in ``agent/eval/liar/``
+LIAR
+    https://www.cs.ucsb.edu/~william/data/liar_dataset.zip
+    Unzip and place train.tsv / test.tsv in agent/eval/datasets/liar/
 
-FEVER:        https://fever.ai/resources.html
-              Download ``paper_dev.jsonl`` → place in ``agent/eval/fever/``
+FEVER
+    https://fever.ai/resources.html
+    Download paper_dev.jsonl and place it in agent/eval/datasets/fever/
 
-FakeNewsNet:  https://github.com/KaiDMML/FakeNewsNet
-              Download CSVs → place ``politifact_fake.csv``, ``politifact_real.csv``,
-              ``gossipcop_fake.csv``, ``gossipcop_real.csv`` in ``agent/eval/fakenewsnet/``
+FakeNewsNet
+    https://github.com/KaiDMML/FakeNewsNet
+    Download the CSVs and place politifact_fake.csv, politifact_real.csv,
+    gossipcop_fake.csv, gossipcop_real.csv in agent/eval/datasets/fakenewsnet/
+
+WELFake
+    https://www.kaggle.com/datasets/emineyetm/fake-news-detection-datasets
+    Download the archive, extract Fake.csv and True.csv into
+    agent/eval/datasets/welfake/
+
+Custom (project smoke-test set)
+    agent/eval/dataset.json (already in the repo)
 """
 
 from __future__ import annotations
@@ -260,9 +271,92 @@ def load_fakenewsnet(
     return items
 
 
-# ---------------------------------------------------------------------------
-# Sampling helper (shared by all adapters with stratified sampling)
-# ---------------------------------------------------------------------------
+def load_welfake(
+    path: Path,
+    *,
+    sample: int | None = None,
+    seed: int = 42,
+) -> list[dict[str, Any]]:
+    """Load WELFake / ISOT-style fake-news dataset.
+
+    Expects a directory with ``Fake.csv`` and ``True.csv`` (Kaggle format),
+    each with at least ``title`` and ``text`` columns.
+    """
+    if path.is_file():
+        files = [(path, "fake" if "fake" in path.stem.lower() else "real")]
+    else:
+        files = []
+        for name, label in [("Fake.csv", "fake"), ("True.csv", "real")]:
+            p = path / name
+            if p.exists():
+                files.append((p, label))
+
+    if not files:
+        raise FileNotFoundError(f"No WELFake CSV files found in {path}. Expected Fake.csv and True.csv")
+
+    csv.field_size_limit(10_000_000)
+
+    items: list[dict[str, Any]] = []
+    for filepath, label in files:
+        source = filepath.stem
+        verdict = "FAKE" if label == "fake" else "REAL"
+        with filepath.open(encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                title = (row.get("title") or "").strip()
+                if not title or len(title) < 10:
+                    continue
+                items.append(
+                    {
+                        "id": f"{source}_{len(items)}",
+                        "text": title,
+                        "expected_verdict": verdict,
+                        "expected_manipulation": "FABRICATED" if verdict == "FAKE" else "NONE",
+                        "notes": f"WELFake source: {source}",
+                        "source_dataset": "welfake",
+                        "original_label": label,
+                    }
+                )
+
+    if sample and sample < len(items):
+        rng = random.Random(seed)
+        by_verdict: dict[str, list[dict]] = {}
+        for item in items:
+            by_verdict.setdefault(item["expected_verdict"], []).append(item)
+        sampled: list[dict] = []
+        for verdict, group in by_verdict.items():
+            n = max(1, round(sample * len(group) / len(items)))
+            sampled.extend(rng.sample(group, min(n, len(group))))
+        rng.shuffle(sampled)
+        items = sampled[:sample]
+
+    return items
+
+
+def balanced_sample(
+    items: list[dict[str, Any]],
+    *,
+    per_class: int,
+    classes: tuple[str, ...] = ("REAL", "FAKE"),
+    seed: int = 42,
+) -> list[dict[str, Any]]:
+    """Return *per_class* items per verdict class. Skips classes with no items."""
+    rng = random.Random(seed)
+    by_verdict: dict[str, list[dict]] = {}
+    for item in items:
+        by_verdict.setdefault(item["expected_verdict"], []).append(item)
+
+    out: list[dict] = []
+    for cls in classes:
+        group = by_verdict.get(cls, [])
+        if not group:
+            continue
+        n = min(per_class, len(group))
+        out.extend(rng.sample(group, n))
+
+    rng.shuffle(out)
+    return out
+
 
 _SAMPABLE_LOADERS = {"liar", "fever", "fakenewsnet"}
 
