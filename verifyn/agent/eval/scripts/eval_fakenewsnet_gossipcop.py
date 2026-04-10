@@ -11,7 +11,7 @@ load_dotenv()
 from verifyn.agent.eval.adapters import balanced_sample, load_fakenewsnet
 from verifyn.agent.eval.scripts._runner import run_balanced_eval
 
-DATASET_DIR = Path(__file__).parent.parent / "datasets" / "fakenewsnet"
+DATASET_DIR = Path(__file__).resolve().parents[4] / "data" / "datasets" / "fakenewsnet"
 REPORT_DIR = Path(__file__).resolve().parents[3] / "docs" / "reports"
 
 

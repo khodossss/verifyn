@@ -7,21 +7,21 @@ Download instructions
 ---------------------
 LIAR
     https://www.cs.ucsb.edu/~william/data/liar_dataset.zip
-    Unzip and place train.tsv / test.tsv in agent/eval/datasets/liar/
+    Unzip and place train.tsv / test.tsv in data/datasets/liar/
 
 FEVER
     https://fever.ai/resources.html
-    Download paper_dev.jsonl and place it in agent/eval/datasets/fever/
+    Download paper_dev.jsonl and place it in data/datasets/fever/
 
 FakeNewsNet
     https://github.com/KaiDMML/FakeNewsNet
     Download the CSVs and place politifact_fake.csv, politifact_real.csv,
-    gossipcop_fake.csv, gossipcop_real.csv in agent/eval/datasets/fakenewsnet/
+    gossipcop_fake.csv, gossipcop_real.csv in data/datasets/fakenewsnet/
 
 WELFake
     https://www.kaggle.com/datasets/emineyetm/fake-news-detection-datasets
     Download the archive, extract Fake.csv and True.csv into
-    agent/eval/datasets/welfake/
+    data/datasets/welfake/
 
 Custom (project smoke-test set)
     agent/eval/dataset.json (already in the repo)

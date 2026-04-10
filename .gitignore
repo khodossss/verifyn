@@ -41,8 +41,8 @@ res.txt
 # Database files
 data/*.db
 
-# Evaluation datasets (downloaded, not committed — see agent/eval/adapters.py for sources)
-agent/eval/datasets/
+# Evaluation datasets (downloaded, not committed)
+data/datasets/
 
 # Trained model weights (large binaries, not committed)
 models/
