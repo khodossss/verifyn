@@ -1,0 +1,4 @@
+*.ipynb linguist-documentation
+*.csv linguist-generated
+*.tsv linguist-generated
+*.jsonl linguist-generated
