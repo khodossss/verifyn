@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 # Ensure the project root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from agent.models import (
+from verifyn.agent.models import (
     ConfidenceLevel,
     EvidenceItem,
     FactCheckResult,

@@ -32,23 +32,48 @@ The core is a [ReAct](https://arxiv.org/abs/2210.03629) agent (Reason → Act �
 
 > **Full architecture details:** [docs/AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md)
 
+### Claim Detector Pre-filter
+
+> **Fine-tuning, threshold calibration, test coverage:** [docs/PREFILTER_FINETUNING.md](docs/PREFILTER_FINETUNING.md)
+
+Before the agent runs, a fine-tuned **DeBERTa-v3-base** classifier (~10ms, ONNX Runtime, no API calls) checks whether the input contains a verifiable factual claim. Non-claims (opinions, greetings, gibberish) are rejected immediately as `NO_CLAIMS` without invoking the LLM.
+
+```text
+Input text
+    |
+    v
+[Claim Detector]  DeBERTa-v3-base (ONNX), ~10ms
+    |
+    +-- score < 0.0005 --> NO_CLAIMS (agent skipped)
+    |
+    +-- score >= 0.0005 --> 9-step ReAct agent
+    |
+    +-- unavailable --> agent runs as usual (graceful fallback)
+```
+
+- **Model:** DeBERTa-v3-base (184M params), ONNX format (~350 MB), trained on [Nithiwat/claim-detection](https://huggingface.co/datasets/Nithiwat/claim-detection) (23K examples), test F1 = 0.91
+- **Runtime:** ONNX Runtime (~50 MB) + tokenizers (~5 MB). No torch or transformers needed in production.
+- **Threshold:** 0.0005. Model produces near-binary scores (0.000x for non-claims, 0.999x for claims)
+- **Configurable:** `CLAIM_DETECTOR_ENABLED=true/false` and `CLAIM_SCORE_THRESHOLD` in `.env`
+- **Graceful:** if onnxruntime or model weights are missing, the pre-filter is silently skipped
+
 ### ReAct Research Loop
 
 ```text
                 News text
-                    │
-                    ▼
-┌─────────────────────────────────────────┐
-│               ReAct Agent               │
-│                                         │
-│       Think → pick tool → call tool     │
-│         ↑                      │        │
-│         └──── observe result ◄─┘        │
-│                                         │
-│          Stops when confident           │
-└─────────────────────────────────────────┘
-                    │
-                    ▼
+                    |
+                    v
++-----------------------------------------+
+|               ReAct Agent               |
+|                                         |
+|       Think -> pick tool -> call tool   |
+|         ^                      |        |
+|         +---- observe result <-+        |
+|                                         |
+|          Stops when confident           |
++-----------------------------------------+
+                    |
+                    v
                Final message 
 ```
 
@@ -95,10 +120,10 @@ The agent **learns from its own verdicts** over time. After each fact-check, eve
          Extract domains from URLs
                      │
                      ▼
-         Apply scoring table (verdict × supports_claim)
+Apply scoring table (verdict × supports_claim)
                      │
                      ▼
-         Upsert domain_reputation DB
+        Upsert domain_reputation DB
 ```
 
 **Scoring rules** — each source gets points based on verdict and whether it supported or contradicted the claim:
@@ -140,7 +165,7 @@ New query → compute embedding (OpenAI text-embedding-3-small)
         ┌───────┴───────┐
         ▼               ▼
    Match found      No match
-   (sim ≥ 0.75)        │
+   (sim ≥ 0.75)         │
         │               └──→ Continue with Steps 2–9
         ▼
    Agent evaluates:
@@ -257,9 +282,9 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ### 4. CLI usage
 
 ```bash
-python agent/run.py --text "NASA confirmed drinking bleach cures COVID-19"
-python agent/run.py --file article.txt --verbose
-python agent/run.py --json --text "..."
+python verifyn/agent/run.py --text "NASA confirmed drinking bleach cures COVID-19"
+python verifyn/agent/run.py --file article.txt --verbose
+python verifyn/agent/run.py --json --text "..."
 ```
 
 ### 5. Use as a Python library
@@ -268,7 +293,7 @@ python agent/run.py --json --text "..."
 from dotenv import load_dotenv
 load_dotenv()
 
-from agent import analyze_news
+from verifyn.agent import analyze_news
 
 result = analyze_news("Your news text here")
 print(result.verdict)           # Verdict.FAKE

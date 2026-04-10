@@ -5,12 +5,16 @@ langchain-openai>=0.3.0
 langchain-community>=0.3.0
 langgraph>=0.2.0
 
-# Optional LLM providers (install as needed)
-# pip install langchain-anthropic   # for Anthropic Claude
-# pip install langchain-ollama      # for local Ollama models
+# Optional LLM providers (uncomment as needed)
+# langchain-anthropic>=0.3.0
+# langchain-ollama>=0.3.0
+
+# Claim detector pre-filter
+onnxruntime>=1.17.0
+tokenizers>=0.19.0
 
 # Search
-tavily-python>=0.5.0
+# tavily-python>=0.5.0 # (uncomment if TAVILY_USE=true)
 ddgs>=7.0.0
 
 # Web content extraction

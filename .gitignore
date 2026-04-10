@@ -44,5 +44,8 @@ data/*.db
 # Evaluation datasets (downloaded, not committed — see agent/eval/adapters.py for sources)
 agent/eval/datasets/
 
+# Trained model weights (large binaries, not committed)
+models/
+
 # Database backups
 data/*.bak

@@ -8,9 +8,10 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"backend/main.py" = ["E402"]       # load_dotenv() must run before imports
-"agent/evaluate.py" = ["E402"]     # sys.path + load_dotenv before imports
-"agent/run.py" = ["E402"]          # sys.path before imports
+"backend/main.py" = ["E402"]               # load_dotenv() must run before imports
+"verifyn/agent/evaluate.py" = ["E402"]     # sys.path + load_dotenv before imports
+"verifyn/agent/run.py" = ["E402"]          # sys.path before imports
 "backend/tests/*" = ["E402", "F401"]
-"agent/tests/*" = ["E402"]         # DATABASE_URL must be set before agent.db imports
-"agent/eval/scripts/*" = ["E402"]  # load_dotenv() must run before agent imports
+"verifyn/agent/tests/*" = ["E402"]         # DATABASE_URL must be set before db imports
+"verifyn/agent/eval/scripts/*" = ["E402"]  # load_dotenv() before agent imports
+"verifyn/claim_detector/*.ipynb" = ["F401", "F541", "E402", "E702", "I001"]  # Colab notebooks

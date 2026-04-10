@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    level=(os.environ.get("LOG_LEVEL") or "INFO").upper(),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -27,8 +27,8 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent import FactCheckResult, analyze_news, analyze_news_stream  # noqa: E402
-from agent.constants import MODE_TO_REASONING_EFFORT  # noqa: E402
+from verifyn.agent import FactCheckResult, analyze_news, analyze_news_stream  # noqa: E402
+from verifyn.agent.constants import MODE_TO_REASONING_EFFORT  # noqa: E402
 
 
 @asynccontextmanager
@@ -80,7 +80,7 @@ async def health():
 
 @app.get("/history", tags=["info"])
 async def history(limit: int = 50):
-    from agent.db import get_query_history
+    from verifyn.agent.db import get_query_history
 
     return get_query_history(limit=limit)
 
